@@ -1,6 +1,20 @@
 "use client";
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
+import {
+  appearanceOptions,
+  defaultPreferences as defaults,
+  validPreferences,
+  readBrowserStorage,
+  writeBrowserStorage,
+  type Preferences,
+} from "@/lib/appearance";
 import {
   ArrowUpRight,
   ArrowRight,
@@ -20,33 +34,34 @@ import {
   TrendingUp,
 } from "lucide-react";
 
-type Preferences = {
-  theme: string;
-  accent: string;
-  density: string;
-  motion: string;
-};
-const defaults: Preferences = {
-  theme: "dark",
-  accent: "mint",
-  density: "comfortable",
-  motion: "full",
-};
 const ThemeContext = createContext({
   prefs: defaults,
-  setPrefs: (_: Partial<Preferences>) => {},
-  rotateAccent: () => {},
+  setPrefs: (_: Partial<Preferences>): boolean => true,
+  persistPrefs: (): boolean => true,
+  setSessionAccent: (_: string) => {},
 });
 const accents = ["mint", "sky", "amber", "rose"];
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [prefs, update] = useState(defaults);
   const [auto, setAuto] = useState("mint");
+  const prefsRef = useRef(defaults);
   useEffect(() => {
     try {
-      const p = JSON.parse(localStorage.getItem("twap-appearance") || "null");
-      if (p) update({ ...defaults, ...p });
-      setAuto(sessionStorage.getItem("twap-session-accent") || "mint");
+      const p = JSON.parse(
+        readBrowserStorage("localStorage", "twap-appearance") || "null",
+      );
+      const next = { ...defaults, ...validPreferences(p) };
+      prefsRef.current = next;
+      update(next);
     } catch {}
+    const storedAccent = readBrowserStorage(
+      "sessionStorage",
+      "twap-session-accent",
+    );
+    const nextAccent = accents.includes(storedAccent || "")
+      ? storedAccent!
+      : "mint";
+    setAuto(nextAccent);
   }, []);
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -67,17 +82,25 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => query.removeEventListener("change", apply);
   }, [prefs, auto]);
   function setPrefs(p: Partial<Preferences>) {
-    update((old) => {
-      const next = { ...old, ...p };
-      localStorage.setItem("twap-appearance", JSON.stringify(next));
-      return next;
-    });
+    const next = { ...prefsRef.current, ...validPreferences(p) };
+    prefsRef.current = next;
+    update(next);
+    return writeBrowserStorage(
+      "localStorage",
+      "twap-appearance",
+      JSON.stringify(next),
+    );
   }
-  function rotateAccent() {
-    const current = sessionStorage.getItem("twap-session-accent") || "mint";
-    const other = accents.filter((a) => a !== current);
-    const next = other[Math.floor(Math.random() * other.length)];
-    sessionStorage.setItem("twap-session-accent", next);
+  function persistPrefs() {
+    return writeBrowserStorage(
+      "localStorage",
+      "twap-appearance",
+      JSON.stringify(prefsRef.current),
+    );
+  }
+  function setSessionAccent(next: string) {
+    if (!accents.includes(next)) return;
+    writeBrowserStorage("sessionStorage", "twap-session-accent", next);
     setAuto(next);
   }
   useEffect(() => {
@@ -93,12 +116,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     ).modelContext;
     if (!context?.registerTool) return;
     const lifecycle = new AbortController();
-    const allowed: Record<string, string[]> = {
-      theme: ["dark", "light", "system"],
-      accent: ["auto", "mint", "sky", "amber", "rose"],
-      density: ["comfortable", "compact"],
-      motion: ["full", "reduced"],
-    };
+    const allowed = appearanceOptions;
     try {
       Promise.resolve(
         context.registerTool(
@@ -122,18 +140,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
               if (!input || typeof input !== "object" || Array.isArray(input))
                 throw new Error("Expected an appearance object");
               for (const [k, v] of Object.entries(input)) {
-                if (!allowed[k]?.includes(String(v)))
+                if (
+                  !Object.hasOwn(allowed, k) ||
+                  typeof v !== "string" ||
+                  !allowed[k].includes(v)
+                )
                   throw new Error("Invalid appearance preference");
               }
-              setPrefs(input as Partial<Preferences>);
+              const persisted = setPrefs(input as Partial<Preferences>);
               await new Promise((resolve) =>
                 requestAnimationFrame(() => requestAnimationFrame(resolve)),
               );
               return {
-                preferences: JSON.parse(
-                  localStorage.getItem("twap-appearance") || "{}",
-                ),
-                savedOn: "this device",
+                preferences: { ...prefsRef.current },
+                savedOn: persisted ? "this device" : "this session only",
               };
             },
           },
@@ -144,7 +164,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => lifecycle.abort();
   }, []);
   return (
-    <ThemeContext.Provider value={{ prefs, setPrefs, rotateAccent }}>
+    <ThemeContext.Provider
+      value={{ prefs, setPrefs, persistPrefs, setSessionAccent }}
+    >
       {children}
     </ThemeContext.Provider>
   );
@@ -173,70 +195,94 @@ export function Logo({ compact = false }: { compact?: boolean }) {
     </Link>
   );
 }
-const points = [
-  213, 210, 220, 199, 203, 178, 190, 169, 180, 157, 161, 168, 155, 143, 151,
-  126, 135, 116, 121, 96, 108, 78, 84, 58, 73, 51, 61, 36, 42, 18, 25, 9,
-];
 export function Chart({
-  mini = false,
-  period = "1M",
+  snapshots = [],
   gradientId = "portfolio-gradient",
 }: {
-  mini?: boolean;
-  period?: string;
+  snapshots?: { value_cents: number; recorded_at: string }[];
   gradientId?: string;
 }) {
-  const id = gradientId;
-  const offset = period === "1W" ? 19 : period === "1D" ? 37 : 0;
-  const line = points
+  if (snapshots.length < 2)
+    return (
+      <div className="real-empty chart-empty">
+        <Activity size={26} />
+        <h3>
+          {snapshots.length
+            ? "One portfolio observation recorded"
+            : "No portfolio history yet"}
+        </h3>
+        <p>
+          {snapshots.length
+            ? "A trend appears after a second valuation."
+            : "Your chart will appear when portfolio valuations are recorded."}
+        </p>
+      </div>
+    );
+  const values = snapshots.map((s) => s.value_cents),
+    min = Math.min(...values),
+    max = Math.max(...values),
+    spread = max - min || Math.max(Math.abs(max) * 0.1, 100);
+  const times = snapshots.map((s) => new Date(s.recorded_at).getTime());
+  const duration = times[times.length - 1] - times[0];
+  const line = values
     .map(
-      (p, i) =>
-        `${i === 0 ? "M" : "L"}${(i * 1000) / (points.length - 1)},${Math.max(10, p + Math.sin(i + offset) * offset)}`,
+      (v, i) =>
+        `${i ? "L" : "M"}${duration ? ((times[i] - times[0]) / duration) * 1000 : (i / (values.length - 1)) * 1000},${220 - ((v - min) / spread) * 190}`,
     )
     .join(" ");
+  const format = (v: number) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+    }).format(v / 100);
   return (
-    <svg
-      className={`portfolio-chart ${mini ? "mini-chart" : ""}`}
-      viewBox="0 0 1000 260"
-      role="img"
-      aria-label={`Illustrative portfolio performance over ${period}`}
-      preserveAspectRatio="none"
-    >
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--brand)" stopOpacity=".19" />
-          <stop offset="100%" stopColor="var(--brand)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {!mini &&
-        [20, 90, 160, 230].map((y) => (
+    <div className="real-chart">
+      <div className="row-between small muted">
+        <span>{format(max)}</span>
+        <span>{snapshots.length} observations</span>
+      </div>
+      <svg
+        className="portfolio-chart"
+        viewBox="0 0 1000 260"
+        role="img"
+        aria-label={`Recorded portfolio values from ${format(values[0])} to ${format(values[values.length - 1])}`}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--brand)" stopOpacity=".19" />
+            <stop offset="100%" stopColor="var(--brand)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {[30, 95, 160, 225].map((y) => (
           <line
             key={y}
             x1="0"
-            y1={y}
             x2="1000"
+            y1={y}
             y2={y}
             stroke="var(--border)"
             strokeDasharray="3 7"
           />
         ))}
-      <path d={`${line} L1000,260 L0,260 Z`} fill={`url(#${id})`} />
-      <path
-        className="chart-stroke"
-        d={line}
-        fill="none"
-        stroke="var(--brand)"
-        strokeWidth={mini ? 4 : 2.5}
-        vectorEffect="non-scaling-stroke"
-        strokeLinejoin="round"
-      />
-      <circle
-        cx="1000"
-        cy={Math.max(10, 9 + Math.sin(31 + offset) * offset)}
-        r="5"
-        fill="var(--brand)"
-      />
-    </svg>
+        <path d={`${line} L1000,260 L0,260 Z`} fill={`url(#${gradientId})`} />
+        <path
+          d={line}
+          stroke="var(--brand)"
+          strokeWidth="2.5"
+          vectorEffect="non-scaling-stroke"
+          fill="none"
+        />
+      </svg>
+      <div className="row-between small muted">
+        <span>{new Date(snapshots[0].recorded_at).toLocaleDateString()}</span>
+        <span>
+          {new Date(
+            snapshots[snapshots.length - 1].recorded_at,
+          ).toLocaleDateString()}
+        </span>
+      </div>
+    </div>
   );
 }
 export function Landing() {
@@ -298,11 +344,8 @@ export function Landing() {
               <Link href="/signup" className="button">
                 Build your workspace <ArrowUpRight size={19} />
               </Link>
-              <Link
-                href="/app/dashboard?demo=1"
-                className="button button-ghost"
-              >
-                Explore the dashboard <ArrowRight size={18} />
+              <Link href="/app/dashboard" className="button button-ghost">
+                Open your dashboard <ArrowRight size={18} />
               </Link>
             </div>
             <div className="hero-footnote">
@@ -321,45 +364,29 @@ export function Landing() {
               <div className="terminal-top">
                 <Logo compact />
                 <span>Your portfolio, in perspective</span>
-                <span className="tag">ILLUSTRATIVE</span>
+                <span className="tag">PRIVATE</span>
               </div>
-              <div className="terminal-balance">
-                <span>
-                  Total portfolio value <ArrowUpRight size={15} />
-                </span>
-                <strong>
-                  $48,562<span>.84</span>
-                </strong>
-                <div className="gain">
-                  <TrendingUp size={15} /> +$4,286.32{" "}
-                  <span>(9.68%) this month</span>
+              <div className="landing-private">
+                <span className="eyebrow">YOUR WORKSPACE AWAITS</span>
+                <h2>
+                  A place for
+                  <br />
+                  <span className="accent-text">every move.</span>
+                </h2>
+                <div className="landing-workspace-list">
+                  <span>
+                    <Activity size={20} /> Your bots
+                  </span>
+                  <span>
+                    <ShieldCheck size={20} /> Your assets
+                  </span>
+                  <span>
+                    <SlidersHorizontal size={20} /> Your perspective
+                  </span>
                 </div>
-              </div>
-              <div className="hero-chart">
-                <div className="chart-callout">
-                  <span>A little more perspective.</span>
-                  <strong>A lot more control.</strong>
-                </div>
-                <Chart />
-              </div>
-              <div className="chart-dates">
-                <span>01 SEP</span>
-                <span>10 SEP</span>
-                <span>20 SEP</span>
-                <span>30 SEP</span>
-              </div>
-              <div className="terminal-bottom">
-                <div>
-                  <span className="coin bitcoin">₿</span>
-                  <div>
-                    <strong>BTC / USDT</strong>
-                    <small>Strategy overview</small>
-                  </div>
-                </div>
-                <span className="mini-spark">▁▂▁▃▂▄▃▅▆▅█</span>
-                <span className="positive">
-                  +12.48% <ArrowUpRight size={14} />
-                </span>
+                <Link href="/login" className="text-link">
+                  Sign in to view your portfolio <ArrowUpRight size={16} />
+                </Link>
               </div>
             </div>
             <div className="visual-caption">
@@ -403,7 +430,7 @@ export function Landing() {
             </p>
           </div>
           <div className="feature-grid">
-            <Link href="/app/dashboard?demo=1" className="feature feature-main">
+            <Link href="/app/dashboard" className="feature feature-main">
               <span className="feature-number">01 / SEE THE WHOLE PICTURE</span>
               <h3>
                 A little perspective
@@ -416,11 +443,15 @@ export function Landing() {
                 Everything that matters, at a glance.
               </p>
               <div className="feature-chart">
-                <Chart mini gradientId="landing-feature-gradient" />
+                <div className="feature-workspace-labels">
+                  <span>Portfolio</span>
+                  <span>Activity</span>
+                  <span>Allocations</span>
+                </div>
               </div>
               <ArrowUpRight className="feature-arrow" />
             </Link>
-            <Link href="/app/bots?demo=1" className="feature">
+            <Link href="/app/bots" className="feature">
               <span className="feature-number">02 / FIND YOUR RHYTHM</span>
               <div className="feature-icon">
                 <Activity size={34} />
@@ -429,18 +460,16 @@ export function Landing() {
               <p>
                 A dedicated home for your bots.
                 <br />
-                Your trading rules come next.
+                Deploy from a curated catalog.
               </p>
               <ArrowUpRight className="feature-arrow" />
             </Link>
-            <Link href="/app/analytics?demo=1" className="feature">
+            <Link href="/app/analytics" className="feature">
               <span className="feature-number">
                 03 / UNDERSTAND THE DETAILS
               </span>
-              <div className="feature-bars" aria-hidden="true">
-                {[25, 48, 36, 66, 52, 83, 70, 100].map((v, i) => (
-                  <i key={i} style={{ height: `${v}%` }} />
-                ))}
+              <div className="feature-icon">
+                <TrendingUp size={34} />
               </div>
               <h3>Clarity in every number.</h3>
               <p>
@@ -499,7 +528,7 @@ export function Landing() {
               <br />
               Set the pace. Make every login feel like you.
             </p>
-            <Link href="/app/settings?demo=1" className="text-link">
+            <Link href="/app/settings" className="text-link">
               Find your look <ArrowUpRight size={18} />
             </Link>
           </div>
@@ -546,16 +575,13 @@ export function Landing() {
         <div className="row-between">
           <Logo />
           <span>Precision. Perspective. TwapTrade.</span>
-          <a href="/app/dashboard?demo=1">
-            Explore the platform <ArrowUpRight size={15} />
+          <a href="/app/dashboard">
+            Open your workspace <ArrowUpRight size={15} />
           </a>
         </div>
         <div className="footer-bottom">
           <span>© {new Date().getFullYear()} TwapTrade</span>
-          <p>
-            Trading involves risk. Illustrative data is for preview only and
-            does not represent actual returns.
-          </p>
+          <p>Trading involves risk. Returns are not guaranteed.</p>
         </div>
       </footer>
     </div>

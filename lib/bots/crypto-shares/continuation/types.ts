@@ -1,0 +1,77 @@
+export type Run = {
+  id: string;
+  user_id: string;
+  bot_id: string;
+  mode: "paper" | "live";
+  status: string;
+  base_lot_cents: number;
+  loss_streak: number;
+  paper_cash_micros: number;
+  wallet_address: string | null;
+  wallet_cipher?: string | null;
+  wallet_type: string | null;
+  connection_status: string;
+  wallet_balance_micros: number | null;
+  forced_minimum: number;
+  message: string;
+  checked_at: number | null;
+  created_at: string;
+  updated_at: string;
+};
+export type Round = {
+  id: string;
+  run_id: string;
+  start_seconds: number;
+  market_slug: string;
+  condition_id: string | null;
+  token_id: string | null;
+  direction: "Up" | "Down" | null;
+  stake_cents: number;
+  status: string;
+  reference_price: string | null;
+  signal_price: string | null;
+  order_id: string | null;
+  cost_micros: number;
+  shares_micros: number;
+  fee_micros: number;
+  sold_shares_micros: number;
+  sale_proceeds_micros: number;
+  sale_fee_micros: number;
+  exit_stable_since: number | null;
+  exit_bid_micros: number | null;
+  mark_micros: number | null;
+  payout_micros: number | null;
+  pnl_micros: number | null;
+  winner: string | null;
+  reason: string;
+  created_at: string;
+  updated_at: string;
+};
+export type Feed = {
+  heartbeat: number;
+  observed_at: number | null;
+  price_e18: string | null;
+  round_start: number | null;
+  open_e18: string | null;
+  message: string;
+};
+export type BotState = {
+  botId: string;
+  balanceCents: number;
+  feed: Feed | null;
+  runnerOnline: boolean;
+  runs: (Omit<Run, "wallet_cipher"> & {
+    rounds: Round[];
+    activeRound: Round | null;
+    roundCount: number;
+    wins: number;
+    losses: number;
+    pnlMicros: number;
+    nextLotCents: number | null;
+    fills: {
+      id: string; round_id: string; order_id: string; side: string; transaction_hash: string;
+      gross_micros: number; shares_micros: number; fee_micros: number; cash_micros: number;
+      price: string; confirmed_at: string; trade_ids: string;
+    }[];
+  })[];
+};

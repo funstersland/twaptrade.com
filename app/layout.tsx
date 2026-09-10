@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "./twap-ui";
 export const metadata: Metadata = {
+  referrer: "no-referrer",
   title: {
     default: "TwapTrade — Your strategy. Always in motion.",
     template: "%s · TwapTrade",

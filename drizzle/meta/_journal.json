@@ -8,6 +8,62 @@
       "when": 1789065436579,
       "tag": "0000_stormy_silvermane",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789067721476,
+      "tag": "0001_icy_blazing_skull",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789069860328,
+      "tag": "0002_flippant_morbius",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789070898007,
+      "tag": "0003_shocking_stick",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789071045540,
+      "tag": "0004_nice_adam_destine",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789073831350,
+      "tag": "0005_lonely_lenny_balinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789075502790,
+      "tag": "0006_next_liz_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789076009992,
+      "tag": "0007_sour_wallow",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789076263300,
+      "tag": "0008_friendly_revanche",
+      "breakpoints": true
     }
   ]
 }

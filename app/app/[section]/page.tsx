@@ -1,5 +1,5 @@
-import { notFound } from "next/navigation";
-import { requireChatGPTUser } from "../../chatgpt-auth";
+import { notFound, redirect } from "next/navigation";
+import { getUser } from "@/lib/server/auth";
 import { Workspace } from "../../workspace";
 export const dynamic = "force-dynamic";
 const sections = [
@@ -29,38 +29,7 @@ export default async function Page({
   const { section } = await params;
   const query = await searchParams;
   if (!sections.includes(section)) notFound();
-  return <WorkspacePage section={section} query={query} />;
-}
-async function WorkspacePage({
-  section,
-  query,
-}: {
-  section: string;
-  query: Record<string, string>;
-}) {
-  const demo = query.demo === "1";
-  const signInQuery = new URLSearchParams(
-    Object.entries(query).filter(([k]) => ["entry", "ref"].includes(k)),
-  );
-  signInQuery.set("entry", "1");
-  const suffix = signInQuery.toString();
-  const user = demo
-    ? null
-    : await requireChatGPTUser(`/app/${section}${suffix ? `?${suffix}` : ""}`);
-  return (
-    <Workspace
-      section={section}
-      demo={demo}
-      user={
-        user
-          ? {
-              name: user.fullName || user.email.split("@")[0],
-              email: user.email,
-            }
-          : null
-      }
-      entry={query.entry === "1"}
-      referral={query.ref || ""}
-    />
-  );
+  const user = await getUser();
+  if (!user || user.status !== "active") redirect("/login");
+  return <Workspace section={section} entry={query.entry === "1"} />;
 }

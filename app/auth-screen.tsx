@@ -7,25 +7,23 @@ import {
   Eye,
   EyeOff,
   LockKeyhole,
-  Mail,
-  Check,
   ShieldCheck,
 } from "lucide-react";
-import { Logo, Chart } from "./twap-ui";
+import { Logo } from "./twap-ui";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 export function AuthScreen({
   mode,
-  referral,
-  signInPath,
+  referral = "",
+  resetToken = "",
 }: {
   mode: string;
-  referral: string;
-  signInPath: string;
+  referral?: string;
+  resetToken?: string;
 }) {
-  const [show, setShow] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [show, setShow] = useState(false),
+    [busy, setBusy] = useState(false),
+    [message, setMessage] = useState(""),
+    [done, setDone] = useState(false);
   const signup = mode === "signup",
     forgot = mode === "forgot-password",
     reset = mode === "reset-password";
@@ -36,25 +34,39 @@ export function AuthScreen({
     try {
       const form = new FormData(e.currentTarget);
       const password = String(form.get("password") || "");
-      if (reset && password !== form.get("confirmPassword")) {
-        setMessage("Your passwords don’t match. Please try again.");
-        return;
+      if (reset && password !== form.get("confirmPassword"))
+        throw new Error("Your passwords don’t match.");
+      const payload: Record<string, unknown> = { action: mode };
+      if (!reset) payload.email = form.get("email");
+      if (!forgot) payload.password = password;
+      if (signup) {
+        payload.name = form.get("name");
+        payload.referral = referral;
       }
-      const res = await fetch("/api/email-auth", {
+      if (reset) payload.token = resetToken;
+      const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: mode,
-          email: form.get("email"),
-          password,
-          name: form.get("name"),
-          referral,
-        }),
+        body: JSON.stringify(payload),
       });
-      const data = (await res.json()) as { message?: string };
-      setMessage(data.message || "Please try again.");
-    } catch {
-      setMessage("We couldn’t connect. Please try again.");
+      const data = (await res.json()) as {
+        error?: string;
+        redirect?: string;
+        message?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Please try again.");
+      if (data.redirect) {
+        window.location.assign(data.redirect);
+        return;
+      }
+      setMessage(data.message || "Request completed.");
+      setDone(reset || forgot);
+    } catch (e) {
+      setMessage(
+        e instanceof Error
+          ? e.message
+          : "We couldn’t connect. Please try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -70,14 +82,18 @@ export function AuthScreen({
             <br />
             <span className="accent-text">Find your calm.</span>
           </h1>
-          <p>A clear head starts with a clear workspace.</p>
-          <div className="auth-graph">
-            <Chart />
-            <span className="auth-graph-label">YOUR NEXT CHAPTER ↗</span>
+          <p>Your strategies, together in one workspace.</p>
+          <div className="auth-monogram" aria-hidden="true">
+            <svg viewBox="0 0 320 190">
+              <path
+                d="M20 40H290L235 100H145L70 180H0L115 40M205 117H280L220 180H145Z"
+                fill="currentColor"
+              />
+            </svg>
           </div>
           <div className="auth-caption">
-            <span>01 — PERSPECTIVE</span>
-            <span>Always in motion.</span>
+            <span>TWAPTRADE / WORKSPACE</span>
+            <span>Built for clarity.</span>
           </div>
         </div>
         <span className="auth-copyright">
@@ -87,7 +103,8 @@ export function AuthScreen({
       <section className="auth-main">
         <div className="auth-top">
           <Link href="/" className="text-link">
-            <ArrowLeft size={16} /> Back to home
+            <ArrowLeft size={16} />
+            Back to home
           </Link>
           <span>
             {signup ? "Already have an account?" : "New to TwapTrade?"}{" "}
@@ -106,7 +123,7 @@ export function AuthScreen({
             {signup
               ? "YOUR NEXT CHAPTER"
               : forgot || reset
-                ? "LET’S GET YOU BACK IN"
+                ? "ACCOUNT RECOVERY"
                 : "GOOD TO SEE YOU AGAIN"}
           </span>
           <h1>
@@ -120,156 +137,132 @@ export function AuthScreen({
           </h1>
           <p>
             {signup
-              ? "A little clarity. A lot of possibility. Your workspace awaits."
+              ? "Create your account and make the workspace yours."
               : forgot
-                ? "Enter your account email to request a reset link."
+                ? "Request help recovering access to your account."
                 : reset
-                  ? "Choose a strong new password for your account."
-                  : "Your strategies, your portfolio, your perspective."}
+                  ? "Choose a new password for your account."
+                  : "Your workspace is right where you left it."}
           </p>
-          {referral && (
-            <div className="info-banner">
-              <Check size={16} /> You’ve been invited. Your referral will be
-              linked when you join.
-            </div>
+          {signup && referral && (
+            <div className="info-banner">Referral code: {referral}</div>
           )}
-          {!forgot && !reset && (
-            <>
-              <a href={signInPath} target="_top" className="button sso-button">
-                <ShieldCheck size={18} /> Continue with ChatGPT{" "}
-                <ArrowUpRight size={16} />
-              </a>
-              <div className="auth-divider">
-                <span />
-                or continue with email
-                <span />
-              </div>
-            </>
-          )}
-          <div className="auth-availability">
-            Email accounts{" "}
-            {forgot || reset ? "and password recovery are" : "are"} awaiting the
-            launch connection.
-            {!forgot &&
-              !reset &&
-              " You can use ChatGPT to create your workspace now."}
-          </div>
           <form onSubmit={submit} className="auth-form">
-            {signup && (
-              <label>
-                Full name
-                <Input
-                  name="name"
-                  placeholder="Your name"
-                  autoComplete="name"
-                  required
-                  maxLength={80}
-                />
-              </label>
-            )}
-            {!reset && (
-              <label>
-                Email address
-                <Input
-                  name="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  autoComplete="email"
-                  required
-                />
-              </label>
-            )}
-            {!forgot && (
-              <label>
-                <span className="row-between">
-                  {reset ? "New password" : "Password"}
-                  {!signup && !reset && (
-                    <Link href="/forgot-password">Forgot password?</Link>
-                  )}
-                </span>
-                <div className="password-input">
-                  <Input
-                    name="password"
-                    type={show ? "text" : "password"}
-                    placeholder={
-                      signup || reset
-                        ? "At least 12 characters"
-                        : "Enter your password"
-                    }
-                    minLength={signup || reset ? 12 : 1}
-                    required
-                    autoComplete={
-                      signup || reset ? "new-password" : "current-password"
-                    }
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShow(!show)}
-                    aria-label={show ? "Hide password" : "Show password"}
-                  >
-                    {show ? <EyeOff size={17} /> : <Eye size={17} />}
-                  </button>
-                </div>
-              </label>
-            )}
-            {reset && (
-              <label>
-                Confirm new password
-                <Input
-                  name="confirmPassword"
-                  type={show ? "text" : "password"}
-                  required
-                  autoComplete="new-password"
-                  minLength={12}
-                />
-              </label>
-            )}
-            {signup && (
-              <div className="signup-note">
-                <ShieldCheck size={15} />
-                <span>
-                  Account access and referral tracking are available with
-                  ChatGPT.
-                </span>
-              </div>
+            {!done && (
+              <>
+                {signup && (
+                  <label>
+                    Full name
+                    <Input
+                      name="name"
+                      placeholder="Your name"
+                      autoComplete="name"
+                      required
+                      maxLength={80}
+                    />
+                  </label>
+                )}
+                {!reset && (
+                  <label>
+                    Email address
+                    <Input
+                      name="email"
+                      type="email"
+                      placeholder="Enter your email address"
+                      autoComplete="username"
+                      required
+                      maxLength={254}
+                    />
+                  </label>
+                )}
+                {!forgot && (
+                  <label>
+                    <span className="row-between">
+                      {reset ? "New password" : "Password"}
+                      {!signup && !reset && (
+                        <Link href="/forgot-password">Forgot password?</Link>
+                      )}
+                    </span>
+                    <div className="password-input">
+                      <Input
+                        name="password"
+                        type={show ? "text" : "password"}
+                        placeholder={
+                          signup || reset
+                            ? "At least 12 characters"
+                            : "Enter your password"
+                        }
+                        minLength={signup || reset ? 12 : 1}
+                        maxLength={128}
+                        required
+                        autoComplete={
+                          signup || reset ? "new-password" : "current-password"
+                        }
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShow(!show)}
+                        aria-label={show ? "Hide password" : "Show password"}
+                      >
+                        {show ? <EyeOff size={17} /> : <Eye size={17} />}
+                      </button>
+                    </div>
+                  </label>
+                )}
+                {reset && (
+                  <label>
+                    Confirm new password
+                    <Input
+                      name="confirmPassword"
+                      type={show ? "text" : "password"}
+                      minLength={12}
+                      maxLength={128}
+                      autoComplete="new-password"
+                      required
+                    />
+                  </label>
+                )}
+              </>
             )}
             {message && (
               <p role="alert" className="form-message">
                 {message}
               </p>
             )}
-            <button className="button full-width" disabled={busy}>
-              {busy
-                ? "Please wait…"
-                : signup
-                  ? "Create account"
-                  : forgot
-                    ? "Send reset link"
-                    : reset
-                      ? "Update password"
-                      : "Log in"}
-              {!busy && <ArrowUpRight size={18} />}
-            </button>
+            {!done && (
+              <button
+                className="button auth-submit"
+                disabled={busy || (reset && !resetToken)}
+              >
+                {busy
+                  ? "Please wait…"
+                  : signup
+                    ? "Create account"
+                    : forgot
+                      ? "Request recovery"
+                      : reset
+                        ? "Update password"
+                        : "Log in"}
+                <ArrowUpRight size={18} />
+              </button>
+            )}
+            {reset && !resetToken && (
+              <p className="form-message">
+                Open the secure reset link provided by your administrator.
+              </p>
+            )}
+            {done && (
+              <Link href="/login" className="button">
+                Back to login
+                <ArrowUpRight size={16} />
+              </Link>
+            )}
           </form>
-          <div className="auth-demo">
-            Want a look around first?{" "}
-            <Link href="/app/dashboard?demo=1&entry=1">
-              Explore the demo <ArrowRightInline />
-            </Link>
-          </div>
-          {forgot && (
-            <Link href="/login" className="back-login">
-              <ArrowLeft size={15} /> Back to log in
-            </Link>
-          )}
         </div>
         <div className="auth-bottom">
-          <LockKeyhole size={13} /> Your workspace, safely in your hands.
+          <ShieldCheck size={14} /> Private access. Your workspace, protected.
         </div>
       </section>
     </main>
   );
-}
-function ArrowRightInline() {
-  return <ArrowUpRight size={13} />;
 }

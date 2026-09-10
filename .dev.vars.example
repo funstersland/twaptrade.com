@@ -1,0 +1,8 @@
+TWAP_ADMIN_EMAIL=""
+TWAP_ADMIN_PASSWORD_HASH=""
+
+# Generate independent random 32-byte base64 values. Never reuse wallet keys.
+TWAP_BOT_ENCRYPTION_KEY=
+TWAP_BOT_RUNNER_TOKEN=
+# Always-on Node runner calls the site over HTTPS (localhost allowed in development).
+TWAP_BOT_APP_ORIGIN=http://localhost:5173

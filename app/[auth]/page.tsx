@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { AuthScreen } from "../auth-screen";
-import { chatGPTSignInPath } from "../chatgpt-auth";
 const routes = ["login", "signup", "forgot-password", "reset-password"];
 export async function generateMetadata({
   params,
@@ -14,7 +13,7 @@ export async function generateMetadata({
         {
           login: "Welcome back",
           signup: "Create your account",
-          "forgot-password": "Reset your password",
+          "forgot-password": "Recover your account",
           "reset-password": "Choose a new password",
         } as Record<string, string>
       )[auth] || "TwapTrade",
@@ -31,12 +30,7 @@ export default async function AuthPage({
   if (!routes.includes(auth)) notFound();
   const query = await searchParams;
   const ref = /^TW-[A-F0-9]{12}$/.test(query.ref || "") ? query.ref : "";
-  const returnTo = `/app/dashboard?entry=1${ref ? `&ref=${ref}` : ""}`;
   return (
-    <AuthScreen
-      mode={auth}
-      referral={ref}
-      signInPath={chatGPTSignInPath(returnTo)}
-    />
+    <AuthScreen mode={auth} referral={ref} resetToken={query.token || ""} />
   );
 }
