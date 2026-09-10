@@ -48,4 +48,17 @@ The following external integrations remain incomplete and must not be represente
 3. Referral cash rewards. Attribution works; no reward formula or payout funding was supplied.
 4. Strategies for other bots. Their deployments remain queued until their execution rules are provided.
 5. Live Polymarket validation with a funded, approved wallet. The user must connect and start the bot. Missing wallet approvals or redemption may require completing those actions on Polymarket. Geographic restrictions are enforced.
-6. Railway’s GitHub account/app authorization must permit repository access for repository discovery and automatic push deployments. A public-repository deployment does not by itself prove that authorization is healthy.
+6. The deployed Railway engine’s Polymarket location check reports live orders restricted. The bot enforces that response. Public data is connected; live trading requires a permitted deployment setup.
+
+## Hosted verification
+
+GitHub push automatically triggered both Railway services from commit `e0a4a5535e41462e8a2235107a867d60bbdf4f5a`. The web service and separate engine deployed successfully. The subsequent documentation-only commit records these results.
+
+- `https://twaptrade.com` serves the landing and all authentication pages successfully.
+- Shared administrator login and authenticated administration return 200. The session cookie is `__Host-`, Secure and HttpOnly; logout succeeds and a foreign Origin is rejected.
+- `/api/health` confirms database access. Unauthenticated runner access is rejected.
+- The Continuation engine heartbeat is online and real Chainlink public prices are arriving. Runs remain zero; no live trades were activated.
+- The production database retained two existing profiles and one requested bot, with zero financial transactions or bot fills.
+- PostgreSQL point-in-time recovery is enabled with its backup bucket connected. Restore recovery has not been rehearsed.
+
+The Railway repository-access listing API returned Not Authorized, but both automatic GitHub push deployments were independently observed. No GitHub reconnection is needed for the verified deployment path.
