@@ -66,12 +66,11 @@ export function Workspace({
   const { prefs, setPrefs, setSessionAccent } = useAppearance();
   const initialized = useRef(false);
   async function load() {
-    setLoading(true);
-    setError("");
     try {
       const result = await requestJSON<Account>("/api/account", {
         action: "init",
       });
+      setError("");
       setAccount(result);
       setSessionAccent(result.sessionAccent);
       if (!initialized.current) {
@@ -97,6 +96,8 @@ export function Workspace({
     }
   }
   useEffect(() => {
+    // Fetch external account state; all React updates occur after the request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [section]);
   useEffect(() => {
@@ -125,7 +126,7 @@ export function Workspace({
       .reduce((n, d) => n + d.allocation_cents, 0) || 0;
   const cash = account?.balanceCents || 0;
   const visibleBots =
-    account?.bots.filter((bot) => family === "all" || bot.family === family) ||
+    account?.bots.filter((bot) => bot.strategy_key !== CONTINUATION.key && (family === "all" || bot.family === family)) ||
     [];
   const masked = (value: number) => (hidden ? "••••••" : money(value));
   const filtered =
@@ -451,11 +452,14 @@ export function Workspace({
                 title="Your bots."
                 detail="Deploy a published bot when your available liquidity covers its allocation."
               />
+              {account.bots.length === 0 && account.deployments.length === 0 && <section className="panel"><Empty title="The catalog is currently empty" detail="Bots will appear here when the administrator publishes them." /></section>}
+              {account.bots.some((bot) => bot.strategy_key === CONTINUATION.key) && <ContinuationBot />}
+              {(account.bots.some((bot) => bot.strategy_key !== CONTINUATION.key) || account.deployments.length > 0) && <>
               <Tabs defaultValue="catalog">
                 <TabsList variant="line">
                   <TabsTrigger value="catalog">
                     Available bots{" "}
-                    <span className="count-pill">{account.bots.length}</span>
+                    <span className="count-pill">{account.bots.filter((bot) => bot.strategy_key !== CONTINUATION.key).length}</span>
                   </TabsTrigger>
                   <TabsTrigger value="deployments">
                     My deployments{" "}
@@ -480,8 +484,6 @@ export function Workspace({
                   {visibleBots.length ? (
                     <div className="real-bot-grid">
                       {visibleBots.map((b) => {
-                        if (b.strategy_key === CONTINUATION.key)
-                          return <ContinuationBot key={b.id} />;
                         const insufficient =
                           cash - reserved < b.min_allocation_cents;
                         const exists = account.deployments.some(
@@ -585,9 +587,9 @@ export function Workspace({
                 </TabsContent>
               </Tabs>
               <p className="workspace-note">
-                Deployed bots remain queued until trading execution is
-                connected.
+                Other published bots remain queued until their trading execution is connected.
               </p>
+              </>}
             </>
           )}
           {section === "analytics" && (

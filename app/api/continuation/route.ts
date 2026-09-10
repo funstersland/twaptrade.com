@@ -238,9 +238,9 @@ export async function POST(request: Request) {
         run.mode === "live" && input.walletKey
           ? await sealWallet(input.walletKey, user.id, bot.id)
           : run.wallet_cipher;
-      await db
+      const configured = await db
         .prepare(
-          "UPDATE continuation_runs SET base_lot_cents=?,wallet_address=?,wallet_cipher=?,connection_status=?,message='',updated_at=? WHERE id=? AND status!='running'",
+          `UPDATE continuation_runs SET base_lot_cents=?,wallet_address=?,wallet_cipher=?,connection_status=?,message='',updated_at=? WHERE id=? AND status!='running' AND NOT EXISTS (SELECT 1 FROM continuation_rounds WHERE run_id=continuation_runs.id AND ${openRoundSql})`,
         )
         .bind(
           input.lotCents,
@@ -255,6 +255,8 @@ export async function POST(request: Request) {
           run.id,
         )
         .run();
+      if (!configured.meta.changes)
+        throw new HttpError(409, "The bot state changed. Pause it and wait for its open position to settle before saving.");
     } else if (input.action === "play") {
       const feed = await db
         .prepare("SELECT heartbeat FROM continuation_feed WHERE id=?")

@@ -52,6 +52,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       );
       const next = { ...defaults, ...validPreferences(p) };
       prefsRef.current = next;
+      // Browser storage is read after hydration to preserve identical server/client markup.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       update(next);
     } catch {}
     const storedAccent = readBrowserStorage(
@@ -575,9 +577,9 @@ export function Landing() {
         <div className="row-between">
           <Logo />
           <span>Precision. Perspective. TwapTrade.</span>
-          <a href="/app/dashboard">
+          <Link href="/app/dashboard">
             Open your workspace <ArrowUpRight size={15} />
-          </a>
+          </Link>
         </div>
         <div className="footer-bottom">
           <span>© {new Date().getFullYear()} TwapTrade</span>

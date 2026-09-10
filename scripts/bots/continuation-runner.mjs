@@ -334,6 +334,8 @@ async function enter(run, target) {
       tokenId,
       direction,
     });
+    if (claim.stakeCents !== lot)
+      return await fail(claim.roundId, "The next lot changed before the entry was reserved. Waiting for the next round.");
     if (run.mode === "paper") {
       const { averagePrice, ...execution } = fill;
       await report({ action: "fill", roundId: claim.roundId, ...execution });
@@ -387,6 +389,9 @@ process.once("SIGINT", () => {
 process.once("SIGTERM", () => {
   stopped = true;
 });
+void geographyAllowed().then((allowed) => {
+  console.log(`Polymarket location check: ${allowed ? "live orders permitted" : "live orders restricted"}.`);
+}).catch(() => console.log("Polymarket location check unavailable; live orders require a successful check."));
 void streamPrices();
 await heartbeat();
 let beating = false;

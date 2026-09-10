@@ -91,13 +91,16 @@ export async function requireAdmin() {
     throw new HttpError(403, "Administrator access is required.");
   return user;
 }
+function secureRequest(request: Request) {
+  return !!process.env.RAILWAY_ENVIRONMENT_ID || new URL(request.url).protocol === "https:";
+}
 export function cookieName(request: Request) {
-  return new URL(request.url).protocol === "https:"
+  return secureRequest(request)
     ? "__Host-twap_session"
     : "twap_session";
 }
 export function sessionCookie(request: Request, value: string, maxAge = 28800) {
-  return `${cookieName(request)}=${value}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`;
+  return `${cookieName(request)}=${value}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${secureRequest(request) ? "; Secure" : ""}`;
 }
 export async function newSession(
   request: Request,

@@ -143,7 +143,7 @@ export async function POST(request: Request) {
     }
     if (input.action === "login") {
       const limit = await rateLimit(request, "login");
-      let record = await db
+      const record = await db
         .prepare(
           "SELECT p.user_id,p.status,p.role,c.password_hash FROM profiles p JOIN credentials c ON c.user_id=p.user_id WHERE p.email=?",
         )

@@ -32,5 +32,5 @@ export default async function Page({
   const user = await getUser();
   if (!user || user.status !== "active") redirect("/login");
   if (!["owner", "admin"].includes(user.role)) redirect("/app/dashboard");
-  return <AdminPanel section={section} />;
+  return <AdminPanel key={section} section={section} />;
 }

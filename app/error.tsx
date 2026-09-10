@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { Logo } from "./twap-ui";
 export default function ErrorPage({
   reset,
@@ -14,9 +15,9 @@ export default function ErrorPage({
       <button onClick={reset} className="button">
         Try again
       </button>
-      <a href="/" className="text-link">
+      <Link href="/" className="text-link">
         Back to home
-      </a>
+      </Link>
     </main>
   );
 }

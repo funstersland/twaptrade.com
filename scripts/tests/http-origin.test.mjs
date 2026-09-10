@@ -1,0 +1,9 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {sameOrigin} from '../../lib/server/http.ts';
+const internal='http://0.0.0.0:3000/api/auth';
+function withEnvironment(t,hosted=true){const previous={host:process.env.RAILWAY_ENVIRONMENT_ID,origins:process.env.TWAP_APP_ORIGINS};if(hosted)process.env.RAILWAY_ENVIRONMENT_ID='verification';else delete process.env.RAILWAY_ENVIRONMENT_ID;process.env.TWAP_APP_ORIGINS='https://twaptrade.com,https://twaptradecom-production.up.railway.app';t.after(()=>{for(const [key,value] of [['RAILWAY_ENVIRONMENT_ID',previous.host],['TWAP_APP_ORIGINS',previous.origins]]){if(value===undefined)delete process.env[key];else process.env[key]=value;}});}
+test('Railway TLS termination accepts only configured external origins',t=>{withEnvironment(t);for(const origin of ['https://twaptrade.com','https://twaptradecom-production.up.railway.app'])assert.doesNotThrow(()=>sameOrigin(new Request(internal,{headers:{origin}})));});
+test('foreign origins and spoofed forwarded host cannot authorize a write',t=>{withEnvironment(t);assert.throws(()=>sameOrigin(new Request(internal,{headers:{origin:'https://attacker.test','x-forwarded-host':'attacker.test','x-forwarded-proto':'https'}})),e=>e.status===403);assert.throws(()=>sameOrigin(new Request(internal)),e=>e.status===403);});
+test('Railway origin configuration fails closed when absent',t=>{withEnvironment(t);delete process.env.TWAP_APP_ORIGINS;assert.throws(()=>sameOrigin(new Request(internal,{headers:{origin:'https://twaptrade.com'}})),e=>e.status===403);});
+test('local preview retains exact same-origin checks',t=>{withEnvironment(t,false);assert.doesNotThrow(()=>sameOrigin(new Request('http://localhost:5173/api/auth',{headers:{origin:'http://localhost:5173'}})));assert.throws(()=>sameOrigin(new Request('http://localhost:5173/api/auth',{headers:{origin:'http://localhost:3001'}})),e=>e.status===403);});

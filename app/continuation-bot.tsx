@@ -62,7 +62,7 @@ export function ContinuationBot() {
     [review, setReview] = useState<Record<string, unknown> | null>(null),
     [expanded, setExpanded] = useState<string | null>(null),
     [page, setPage] = useState(1),
-    [now, setNow] = useState(Date.now());
+    [now, setNow] = useState(() => Date.now());
   async function load() {
     const data = await requestJSON<BotState>(`/api/continuation?page=${page}`);
     setState(data);
@@ -305,7 +305,7 @@ export function ContinuationBot() {
               </div>
             </div>
             {open ? (
-              <Position round={open} />
+              <Position round={open} now={now} />
             ) : (
               <div className="continuation-position-empty">
                 <span className="small muted">No open position</span>
@@ -597,8 +597,8 @@ export function ContinuationBot() {
     </div>
   );
 }
-function Position({ round }: { round: Round }) {
-  const marked = Date.now() - Date.parse(round.updated_at) < 20000 ? round.mark_micros : null;
+function Position({ round, now }: { round: Round; now: number }) {
+  const marked = now - Date.parse(round.updated_at) < 20000 ? round.mark_micros : null;
   return (
     <div className="continuation-position">
       <span className="position-direction">
@@ -620,7 +620,7 @@ function Position({ round }: { round: Round }) {
         <strong>{dollars(round.cost_micros)}</strong>
       </div>
       <div><span>Entry price</span><strong>{round.shares_micros ? ((round.cost_micros-round.fee_micros)/round.shares_micros*100).toFixed(3)+"¢" : "—"}</strong></div>
-      <div><span>99¢ exit</span><strong>{round.exit_stable_since && Date.now()-Date.parse(round.updated_at)<2000 ? `${Math.min(5,Math.floor((Date.now()-round.exit_stable_since)/1000))} / 5 sec` : "Watching bid"}</strong></div>
+      <div><span>99¢ exit</span><strong>{round.exit_stable_since && now-Date.parse(round.updated_at)<2000 ? `${Math.min(5,Math.floor((now-round.exit_stable_since)/1000))} / 5 sec` : "Watching bid"}</strong></div>
       <div>
         <span>Current value</span>
         <strong>

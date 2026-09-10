@@ -106,8 +106,6 @@ export function AdminPanel({ section }: { section: string }) {
   const serial = useRef(0);
   async function load() {
     const seq = ++serial.current;
-    setLoading(true);
-    setError("");
     try {
       const params = new URLSearchParams({
         view: section,
@@ -118,6 +116,7 @@ export function AdminPanel({ section }: { section: string }) {
       });
       const result = await requestJSON<AdminData>(`/api/admin?${params}`);
       if (seq !== serial.current) return;
+      setError("");
       setData(result);
       setRevision((value) => value + 1);
       setSessionAccent(result.sessionAccent);
@@ -140,15 +139,8 @@ export function AdminPanel({ section }: { section: string }) {
     }
   }
   useEffect(() => {
-    setPage(1);
-    setSearch("");
-    setQuery("");
-    setStatus("all");
-    setFamily("all");
-    setEditor(null);
-    setData(null);
-  }, [section]);
-  useEffect(() => {
+    // Fetch external account state; all React updates occur after the request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
     return () => {
       serial.current++;
@@ -383,7 +375,7 @@ export function AdminPanel({ section }: { section: string }) {
         <button
           className="button button-ghost button-small"
           disabled={loading}
-          onClick={() => void load()}
+          onClick={() => {setLoading(true); void load();}}
           aria-label="Refresh records"
         >
           <RefreshCw size={16} />
@@ -392,7 +384,7 @@ export function AdminPanel({ section }: { section: string }) {
       {error && (
         <div className="error-banner" role="alert">
           <span>{error}</span>
-          <button onClick={() => void load()}>Try again</button>
+          <button onClick={() => {setLoading(true); void load();}}>Try again</button>
         </div>
       )}
       {loading && !data && (

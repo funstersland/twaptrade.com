@@ -19,7 +19,12 @@ export function json(
   });
 }
 export function sameOrigin(request: Request) {
-  if (request.headers.get("origin") !== new URL(request.url).origin)
+  // Railway terminates TLS before Next, so request.url can contain the internal
+  // HTTP host. Use a deployment-controlled allowlist, never client proxy headers.
+  const allowed = process.env.RAILWAY_ENVIRONMENT_ID
+    ? (process.env.TWAP_APP_ORIGINS || "").split(",").map((value) => value.trim()).filter(Boolean)
+    : [new URL(request.url).origin];
+  if (!allowed.includes(request.headers.get("origin") || ""))
     throw new HttpError(403, "This request could not be verified.");
 }
 export async function body<T extends z.ZodTypeAny>(

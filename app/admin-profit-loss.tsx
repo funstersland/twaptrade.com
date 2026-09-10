@@ -59,13 +59,11 @@ export function ProfitLoss({ refreshKey = 0 }: { refreshKey?: number }) {
     [loading, setLoading] = useState(true);
   useEffect(() => {
     let current = true;
-    setLoading(true);
-    setError("");
     requestJSON<Data>(
       `/api/profit-loss?${new URLSearchParams({ q: query, page: String(page) })}`,
     )
       .then((result) => {
-        if (current) setData(result);
+        if (current) {setData(result); setError("");}
       })
       .catch((e) => {
         if (current) setError(e.message);

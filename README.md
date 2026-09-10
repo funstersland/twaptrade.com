@@ -47,15 +47,17 @@ Run `npm run dev` for the local preview. Run `npx tsc --noEmit` and `npm run bui
 
 The schema is in `db/schema.ts`. Generate append-only migrations with `npm run db:generate`. Apply migrations in numeric order from `drizzle/0000_stormy_silvermane.sql` through `drizzle/0005_lonely_lenny_balinger.sql`. Migration 0002 stores session accents, 0003 adds reviewed Profit/Loss batches, 0004 adds bot families and the family/name uniqueness index, and 0005 adds the isolated Continuation Strategy state. Existing deployments need every unapplied migration before this code is published. Previously created external-identity profiles retain their records; an administrator must set their email and issue a password setup link to enable email login.
 
-The local admin update has not been published. Hosting requires the new migration and owner verifier environment binding. No visual browser automation was run; validation uses type checking, production builds, and isolated HTTP/API tests.
+Validation uses linting, type checking, production builds, and isolated HTTP/API tests. The review report records completed features and remaining provider integrations.
 
 
 ## Railway deployment
 
 Production uses Next.js on Node 24 with Railway PostgreSQL. The existing Sites/Vinext local workflow remains available. `npm run build:railway` builds the standalone server; the Dockerfile serves it with `node server.js`. The separate `continuation-engine` service runs `node scripts/bots/continuation-runner.mjs` and must remain awake with one replica.
 
+- Both application services source `funstersland/twaptrade.com`, branch `main`. `node scripts/configure-railway.mjs` configures their distinct start commands and the web pre-deploy migration. Railway detects the root Dockerfile automatically; no shared start-command config file overrides the worker.
 - Project: `twaptrade.com`; web service: `twaptrade.com`; database: `Postgres`; bot service: `continuation-engine`.
 - Web secret variables: `DATABASE_URL` (Railway private PostgreSQL reference), `TWAP_ADMIN_EMAIL`, `TWAP_ADMIN_PASSWORD_HASH`, `TWAP_BOT_ENCRYPTION_KEY`, `TWAP_BOT_RUNNER_TOKEN`.
+- Web allowed origins: `TWAP_APP_ORIGINS=https://twaptrade.com,https://twaptradecom-production.up.railway.app`. This explicit list handles Railway TLS termination while keeping cross-origin writes blocked.
 - Engine secrets: the same encryption key and runner token, plus `TWAP_BOT_APP_ORIGIN` pointing to the web service HTTPS URL. Never commit secrets or database exports.
 - `node scripts/migrate-postgres.mjs` applies append-only migrations atomically with checksum verification. Production pre-deploy runs it automatically. Integer money uses PostgreSQL bigint with checked conversion; writes are serialized in transactions so concurrent ledger/deployment updates cannot overspend.
 - `node scripts/import-sqlite-to-postgres.mjs /absolute/source.sqlite` copies existing application records into an empty migrated PostgreSQL database. It verifies row counts, never overwrites nonempty tables, and leaves the source intact. Existing sessions, rate-limit state, and runner leases are not migrated.
