@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { reversalFixture } from "./cheapshare-fixtures.mjs";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
@@ -9,7 +10,7 @@ import {
 } from "../../lib/bots/crypto-shares/cheapshare/rules.ts";
 const root =
   ".sites-runtime/cheapshare-test-state/v3/d1/miniflare-D1DatabaseObject";
-const file = fs.readdirSync(root).find((f) => f.endsWith(".sqlite"));
+const file = fs.readdirSync(root).find((f) => f.endsWith(".sqlite") && f !== "metadata.sqlite");
 if (!file) throw Error("Isolated CheapShare test DB missing");
 const db = new DatabaseSync(`${root}/${file}`),
   cfg = JSON.parse(
@@ -39,6 +40,7 @@ async function runner(payload, status = 200) {
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${cfg.vars.TWAP_CHEAPSHARE_RUNNER_TOKEN}`,
+      "x-cheapshare-version": "2",
     },
     body: JSON.stringify({ ...payload, lease }),
   });
@@ -56,14 +58,14 @@ async function heartbeat() {
   });
 }
 db.exec(
-  "DELETE FROM cheapshare_events; DELETE FROM cheapshare_runs; DELETE FROM cheapshare_markets; DELETE FROM cheapshare_feed; DELETE FROM bots;",
+  "DELETE FROM auth_limits; DELETE FROM cheapshare_events; DELETE FROM cheapshare_runs; DELETE FROM cheapshare_markets; DELETE FROM cheapshare_feed; DELETE FROM bots;",
 );
 const bot = randomUUID(),
   other = randomUUID(),
   now = new Date().toISOString();
 db.prepare(
   "INSERT INTO bots(id,name,pair,family,strategy_key,description,status,min_allocation_cents,created_by,created_at,updated_at) VALUES(?,?,'6 pairs','Crypto Shares',?,'','published',0,'verification',?,?)",
-).run(bot, "CheapShare", "crypto-shares.cheapshare.ctr-m", now, now);
+).run(bot, "CheapShare", "crypto-shares.cheapshare.flip", now, now);
 db.prepare(
   "INSERT INTO bots(id,name,pair,family,strategy_key,description,status,min_allocation_cents,created_by,created_at,updated_at) VALUES(?,?,'BTC5m','Crypto Shares',?,'','published',100000,'verification',?,?)",
 ).run(
@@ -157,75 +159,18 @@ await runner(
   },
   403,
 );
-// Choose an in-progress 15m window with enough projector time remaining.
-const at = Date.now(),
-  start = Math.floor(at / 900000) * 900;
-assert(
-  start * 1000 + 900000 - at > 35000,
-  "Run this verification outside the final 35 seconds of a 15m window",
-);
-const f = (n) => fixed(String(n)).toString(),
-  slug = `btc-updown-15m-${start}`;
-await runner(
-  {
-    action: "reference",
-    slug,
-    strike: f(100),
-    source: "chainlink-open",
-    observedAt: start * 1000 + 1,
-  },
-  400,
-);
-await runner({
-  action: "reference",
-  slug,
-  strike: f(100),
-  source: "chainlink-open",
-  observedAt: start * 1000,
-});
-const positionId = randomUUID(),
-  orderId = randomUUID(),
-  market = {
-    slug,
-    pair: "BTC",
-    window: 900,
-    start,
-    end: start + 900,
-    conditionId: "0x" + "ab".repeat(32),
-    upToken: "123",
-    downToken: "456",
-    strike: f(100),
-    strikeSource: "chainlink-open",
-    feeRate: 0.07,
-    feeExponent: 1,
-  };
-function observation() {
-  const t = Date.now();
-  return {
-    now: t,
-    end: market.end * 1000,
-    strike: market.strike,
-    twap: Array.from({ length: 71 }, (_, n) => ({
-      at: t - 70000 + n * 1000,
-      value: f((99.875 + n / 3000).toFixed(8)),
-    })),
-    spot: Array.from({ length: 41 }, (_, n) => ({
-      at: t - 20000 + n * 500,
-      bid: f(100.19),
-      ask: f(100.21),
-    })),
-    up: {
-      at: t,
-      bids: [{ price: "0.19", size: "10000" }],
-      asks: [{ price: "0.21", size: "10000" }],
-    },
-    down: {
-      at: t,
-      bids: [{ price: "0.78", size: "10000" }],
-      asks: [{ price: "0.80", size: "10000" }],
-    },
-  };
+// Keep the HTTP entry inside a real aligned test window with time to observe a reversal.
+const phase = Date.now() % 900000;
+if (phase < 12000 || phase > 860000) {
+  await new Promise(resolve => setTimeout(resolve, phase < 12000 ? 12000-phase : 912000-phase));
+  await heartbeat();
 }
+const at = Date.now(), start = Math.floor(at / 900000) * 900;
+const f = n => fixed(String(n)).toString(), slug = `btc-updown-15m-${start}`;
+await runner({action:"reference",slug,strike:f(77000),source:"chainlink-open",observedAt:start*1000+1},400);
+await runner({action:"reference",slug,strike:f(77000),source:"chainlink-open",observedAt:start*1000});
+const positionId=randomUUID(), orderId=randomUUID(), market=reversalFixture(at,76998,77010,900).market;
+function observation() { return reversalFixture(Date.now(),76998,77010,900).observation; }
 const before = db
   .prepare(
     "SELECT (SELECT COUNT(*) FROM transactions) tx,(SELECT COUNT(*) FROM deployments) deployments,(SELECT COUNT(*) FROM holdings) holdings,(SELECT COUNT(*) FROM portfolio_snapshots) snapshots",
@@ -279,7 +224,7 @@ const submit = await runner({
   eventId: randomUUID(),
   command: { action: "submit", positionId, orderId },
 });
-const q = buyQuote(observation().up.asks, 10000000, 0.28, 0.07, 1),
+const q = buyQuote(observation().up.asks, 10000000, 0.50, 0.07, 1),
   fill = {
     ...q,
     id: `paper:${orderId}`,
@@ -369,6 +314,16 @@ assert.deepEqual(
   before,
 );
 count += 2;
+// A retired run remains archived, is omitted from current mode slots and rejects member commands.
+const archived=randomUUID(), archivedState={...run.state,strategyVersion:1,armed:false,retired:true};
+db.prepare("INSERT INTO cheapshare_runs(id,user_id,bot_id,mode,strategy_version,revision,last_event,state_json,created_at,updated_at) SELECT ?,user_id,bot_id,mode,1,0,?,?,created_at,updated_at FROM cheapshare_runs WHERE id=?")
+ .run(archived,archived,JSON.stringify(archivedState),paper);
+const current=(await api("/api/cheapshare",null,a.cookie)).d.runs;
+assert(!current.some(r=>r.id===archived));count++;
+db.prepare("UPDATE bots SET status='published' WHERE id=?").run(bot);
+await api("/api/cheapshare",{action:"arm",runId:archived,revision:0,confirmVersion:null},a.cookie,404);
+const retiredWorker=await fetch(origin+"/api/cheapshare/runner",{headers:{authorization:`Bearer ${cfg.vars.TWAP_CHEAPSHARE_RUNNER_TOKEN}`}});
+assert.equal(retiredWorker.status,409);count++;
 // Keep fixtures out of all real account stores; this entire database is throwaway.
 console.log(
   `CheapShare HTTP verification: ${count} checks passed in isolated SQLite.`,

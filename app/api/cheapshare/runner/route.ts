@@ -55,7 +55,7 @@ export async function GET(req: Request) {
     const [runs, refs] = await Promise.all([
       db
         .prepare(
-          "SELECT r.*,p.status member_status FROM cheapshare_runs r JOIN profiles p ON p.user_id=r.user_id WHERE r.bot_id=?",
+          "SELECT r.*,p.status member_status FROM cheapshare_runs r JOIN profiles p ON p.user_id=r.user_id WHERE r.bot_id=? AND r.strategy_version=2",
         )
         .bind(b.id)
         .all<RunRow & { member_status: string }>(),
@@ -155,7 +155,7 @@ export async function POST(req: Request) {
       );
     const b = await cheapshareBot(),
       r = await db
-        .prepare("SELECT * FROM cheapshare_runs WHERE id=? AND bot_id=?")
+        .prepare("SELECT * FROM cheapshare_runs WHERE id=? AND bot_id=? AND strategy_version=2")
         .bind(c.runId, b.id)
         .first<RunRow>();
     if (!r) throw new HttpError(404, "Run not found.");

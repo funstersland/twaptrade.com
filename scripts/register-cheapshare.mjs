@@ -17,12 +17,27 @@ try {
       [CHEAPSHARE.family, CHEAPSHARE.name],
     )
   ).rows;
+  const description = "Watch each round for a sudden spot reversal with enough price-and-time strength to flip TWAP. Check profit room and exit liquidity; paper first, ARM off.";
   if (rows.length) {
-    if (rows.length !== 1 || rows[0].strategy_key !== CHEAPSHARE.key)
-      throw Error(
-        "CheapShare identity conflict; review the exact catalog record.",
-      );
-    console.log("CheapShare already registered:", rows[0].id);
+    if (rows.length !== 1 || ![CHEAPSHARE.key, CHEAPSHARE.legacyKey].includes(rows[0].strategy_key))
+      throw Error("CheapShare identity conflict; review the exact catalog record.");
+    const id = rows[0].id;
+    const retired = (await db.query("SELECT * FROM cheapshare_runs WHERE bot_id=$1 AND strategy_version<2", [id])).rows;
+    for (const run of retired) {
+      const previous = JSON.parse(run.state_json);
+      if (previous.retired) continue;
+      if (run.mode === "live" && previous.positions?.length)
+        throw Error("CheapShare has legacy live positions requiring reconciliation before replacement.");
+      const event = randomUUID(), now = new Date().toISOString();
+      const state = { ...previous, retired: true, armed: false, confirmedVersion: null,
+        message: "This strategy was retired. Deploy the replacement CheapShare to continue." };
+      await db.query("UPDATE cheapshare_runs SET state_json=$1,revision=revision+1,last_event=$2,updated_at=$3 WHERE id=$4", [JSON.stringify(state), event, now, run.id]);
+      await db.query("INSERT INTO cheapshare_events (id,run_id,revision,kind,data_json,created_at) VALUES ($1,$2,$3,'strategy-replaced',$4,$5)",
+        [event, run.id, Number(run.revision)+1, JSON.stringify({ previousStrategy: CHEAPSHARE.legacyKey, previousState: previous }), now]);
+    }
+    await db.query("UPDATE bots SET strategy_key=$1,description=$2,pair=$3,updated_at=$4 WHERE id=$5",
+      [CHEAPSHARE.key, description, CHEAPSHARE.pair, new Date().toISOString(), id]);
+    console.log("CheapShare reversal strategy registered:", id);
   } else {
     const id = randomUUID(),
       now = new Date().toISOString();
@@ -34,7 +49,7 @@ try {
         CHEAPSHARE.pair,
         CHEAPSHARE.family,
         CHEAPSHARE.key,
-        "Fade a mature crowd with spot hold and projected TWAP clearance. Paper first; live requires ARM and confirmation.",
+        description,
         now,
       ],
     );

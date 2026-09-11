@@ -6,6 +6,8 @@ import {
   stake,
   buyQuote,
   sellQuote,
+  entryPlan,
+  exitPlan,
 } from "../../lib/bots/crypto-shares/cheapshare/rules.ts";
 import {
   canEnter,
@@ -47,6 +49,7 @@ async function bridge(payload) {
     headers: {
       authorization: `Bearer ${process.env.TWAP_CHEAPSHARE_RUNNER_TOKEN}`,
       "content-type": "application/json",
+      "x-cheapshare-version": "2",
     },
     ...(payload ? { body: JSON.stringify({ ...payload, lease }) } : {}),
     signal: AbortSignal.timeout(6000),
@@ -318,6 +321,7 @@ async function tick() {
             slug,
             pair,
             window: w,
+            windowSeconds: raw.windowSeconds,
             start,
             end: raw.end,
             conditionId: raw.conditionId,
@@ -339,8 +343,8 @@ async function tick() {
             ref,
             books: { up, down },
             accepting: raw.accepting,
-            error: !feeds.available.has(pair)
-              ? "Binance spot feed unavailable"
+            error: !feeds.available.has(pair) && !(pair === "HYPE" && feeds.hypeAvailable)
+              ? "Spot feed unavailable"
               : null,
           };
         } catch (e) {
@@ -359,6 +363,9 @@ async function tick() {
       strike: v.m?.strike || null,
       strikeSource: v.ref?.source || null,
       twap: feeds.twap.get(v.pair)?.at(-1) || null,
+      oracle: feeds.oracle.get(v.pair)?.at(-1) || null,
+      windowSeconds: v.m?.windowSeconds || null,
+      spotSource: v.pair === "HYPE" ? "Hyperliquid HYPE/USDC spot" : "Binance spot",
       spot: feeds.spot.get(v.pair)?.at(-1) || null,
       end: v.m?.end || null,
     })),
@@ -381,6 +388,7 @@ async function tick() {
     }
   for (const run of jobs.runs) {
     try {
+      if (run.state.strategyVersion !== 2) continue;
       await reconcile(run);
       if (
         run.mode === "live" &&
@@ -426,26 +434,17 @@ async function tick() {
             config,
             preset: config.presets[`${v.pair}:${v.window}`],
           });
-        const budget = result.setup
-          ? stake(config, result.setup, s.lossStreak)
-          : null;
-        const book = result.side === "Up" ? v.books.up : v.books.down,
-          depth =
-            budget &&
-            buyQuote(
-              book.asks,
-              budget,
-              result.setup === "A" ? 0.28 : 0.12,
-              v.m.feeRate,
-              v.m.feeExponent,
-            );
+        const budget = stake(config);
+        const book = result.side === "Up" ? v.books.up : v.books.down;
+        const plan = entryPlan(config, book, budget, v.m.feeRate, v.m.feeExponent);
+        const depth = plan.ok;
         const risk = budget && canEnter(s, budget, Date.now());
         let reason = !s.armed
           ? "ARM is off"
           : !result.eligible
             ? result.reason
             : !depth
-              ? "Insufficient ask depth"
+              ? plan.reason
               : !risk
                 ? "Liquidity, position or loss limit reached"
                 : !v.accepting
@@ -500,24 +499,11 @@ async function tick() {
             await command(run, { action: "inventory", positionId: p.id });
             continue;
           }
-          // Scale exits retain their trigger as the limit; emergency exits walk current executable depth.
+          // Use a valid observed book tick without relaxing the net-profit floor.
           const pb = p.side === "Up" ? i.up : i.down;
-          let limit = sig.min;
-          if (sig.purpose === "emergency" || sig.purpose === "time") {
-            let remaining = sig.shares / 1e6;
-            for (const l of [...pb.bids].sort(
-              (a, b) => Number(b.price) - Number(a.price),
-            )) {
-              remaining -= Number(l.size);
-              limit = Number(l.price);
-              if (remaining <= 0) break;
-            }
-            if (remaining > 0) continue;
-          }
-          if (
-            !sellQuote(pb.bids, sig.shares, limit, v.m.feeRate, v.m.feeExponent)
-          )
-            continue;
+          const exit = exitPlan(pb.bids, sig.shares, sig.min, v.m.feeRate, v.m.feeExponent);
+          if (!exit) continue;
+          const limit = exit.limit;
           const prepared =
             run.mode === "live"
               ? await prepareSell(run, token, sig.shares, limit)
@@ -537,7 +523,7 @@ async function tick() {
           );
         }
         if (
-          reason === "Entry eligible" &&
+          reason === "Entry eligible" && plan.ok &&
           run.member_status === "active" &&
           (run.mode === "paper" || geoAllowed) &&
           !run.state.positions.some((p) => p.market.slug === v.m.slug)
@@ -549,7 +535,7 @@ async function tick() {
                     run,
                     token,
                     budget,
-                    result.setup === "A" ? 0.28 : 0.12,
+                    plan.limit,
                   )
                 : null;
           await fire(
@@ -569,7 +555,7 @@ async function tick() {
         action: "scan",
         rows,
         message: run.state.armed
-          ? "Watching for a qualified fade."
+          ? "Watching for a confirmed spot reversal."
           : "ARM is off. No new buy or sell orders.",
       });
     } catch (e) {

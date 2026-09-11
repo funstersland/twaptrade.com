@@ -71,6 +71,13 @@
       "when": 1789090783776,
       "tag": "0009_red_risque",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789132562462,
+      "tag": "0010_wonderful_firestar",
+      "breakpoints": true
     }
   ]
 }

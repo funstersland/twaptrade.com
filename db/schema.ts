@@ -13,6 +13,7 @@ export const cheapshareRuns = sqliteTable("cheapshare_runs", {
   userId: text("user_id").notNull().references(() => profiles.userId),
   botId: text("bot_id").notNull().references(() => bots.id),
   mode: text("mode").notNull(),
+  strategyVersion: integer("strategy_version").notNull().default(1),
   revision: integer("revision").notNull().default(0),
   lastEvent: text("last_event").notNull(),
   stateJson: text("state_json").notNull(),
@@ -20,7 +21,7 @@ export const cheapshareRuns = sqliteTable("cheapshare_runs", {
   walletCipher: text("wallet_cipher"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
-}, t => [uniqueIndex("idx_cheapshare_user_bot_mode").on(t.userId,t.botId,t.mode)]);
+}, t => [uniqueIndex("idx_cheapshare_user_bot_mode").on(t.userId,t.botId,t.mode,t.strategyVersion)]);
 export const cheapshareEvents = sqliteTable("cheapshare_events", {
   id: text("id").primaryKey(),
   runId: text("run_id").notNull().references(() => cheapshareRuns.id),

@@ -269,7 +269,7 @@ export async function POST(request: Request) {
     if (input.action === "save-bot") {
       if (input.id) {
         const scoped = await db.prepare("SELECT strategy_key FROM bots WHERE id=?").bind(input.id).first<{strategy_key:string|null}>();
-        if (scoped?.strategy_key === "crypto-shares.cheapshare.ctr-m" && (input.name !== "CheapShare" || input.family !== "Crypto Shares"))
+        if (scoped?.strategy_key === "crypto-shares.cheapshare.flip" && (input.name !== "CheapShare" || input.family !== "Crypto Shares"))
           throw new HttpError(409, "CheapShare's name and family identify its trading engine and cannot be reassigned.");
       }
       const id = input.id || crypto.randomUUID();

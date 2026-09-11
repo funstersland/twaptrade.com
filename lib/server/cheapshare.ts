@@ -45,6 +45,8 @@ export async function requireCheapshareRunner(req: Request) {
     diff |= v ^ new Uint8Array(b)[i];
   });
   if (diff) throw new HttpError(401, "Runner authentication required.");
+  if (req.headers.get("x-cheapshare-version") !== "2")
+    throw new HttpError(409, "CheapShare runner version has been replaced.");
 }
 export async function sealCheapshareWallet(
   keyText: string,

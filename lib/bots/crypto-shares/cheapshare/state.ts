@@ -6,6 +6,7 @@ import {
   utcPeriods,
   scan,
   buyQuote,
+  entryPlan,
   sellQuote,
   type ScanInput,
 } from "./rules.ts";
@@ -24,6 +25,7 @@ export const marketSchema = z
     downToken: price,
     strike: price,
     strikeSource: z.enum(["gamma", "chainlink-open"]),
+    windowSeconds: z.union([z.literal(30), z.literal(60)]),
     feeRate: z.number().min(0).max(0.5),
     feeExponent: z.number().min(0).max(5),
   })
@@ -64,15 +66,16 @@ export type Position = {
   id: string;
   market: Market;
   side: Direction;
-  setup: "A" | "B";
+  setup: "flip";
+  impulseFrom: string;
+  entryHeadroom: string;
+  entryProjection: string;
   stake: number;
   cost: number;
   shares: number;
   sold: number;
   proceeds: number;
   fees: number;
-  stage55: boolean;
-  stage75: boolean;
   order: Order | null;
   fills: Fill[];
   openedAt: number;
@@ -84,6 +87,7 @@ export type Position = {
   inventoryError: boolean;
 };
 export type State = {
+  strategyVersion: 2;
   mode: "paper" | "live";
   armed: boolean;
   config: Config;
@@ -114,6 +118,7 @@ export function initialState(
   config = DEFAULT_CONFIG,
 ): State {
   return {
+    strategyVersion: 2,
     mode,
     armed: false,
     config: configSchema.parse(config),
@@ -224,9 +229,13 @@ const book = z
 export const observationSchema = z
   .object({
     now: amount,
+    start: amount,
     end: amount,
+    watchingSince: amount.nullable(),
+    windowSeconds: z.union([z.literal(30), z.literal(60)]),
     strike: price.nullable(),
     twap: z.array(z.object({ at: amount, value: price }).strict()).max(500),
+    oracle: z.array(z.object({ at: amount, value: price }).strict()).max(1000),
     spot: z
       .array(z.object({ at: amount, bid: price, ask: price }).strict())
       .max(10000),
@@ -269,7 +278,7 @@ export const commandSchema = z.discriminatedUnion("action", [
       action: z.literal("exit"),
       positionId: z.string().uuid(),
       orderId: z.string().min(1).max(100),
-      purpose: z.enum(["scale55", "scale75", "take88", "emergency", "time"]),
+      purpose: z.enum(["profit-target", "weakening", "feed-gap", "time"]),
       limit: z.number().min(0.001).max(0.99),
       shares: amount,
       observation: observationSchema,
@@ -316,67 +325,40 @@ export const commandSchema = z.discriminatedUnion("action", [
     .strict(),
 ]);
 export type Command = z.infer<typeof commandSchema>;
-import { directionSign, held, project, top } from "./rules.ts";
-export function exitSignal(
-  p: Position,
-  i: Omit<ScanInput, "preset" | "config">,
-  config: Config,
-) {
-  const t = i.twap.at(-1),
-    b = i.spot.at(-1),
-    book = p.side === "Up" ? i.up : i.down,
-    now = i.now,
-    preset = config.presets[`${p.market.pair}:${p.market.window}`];
-  if (
-    !t ||
-    !b ||
-    now - t.at > 3000 ||
-    now - b.at > 1500 ||
-    now - book.at > 3000 ||
-    t.at > now ||
-    b.at > now ||
-    book.at > now + 500 ||
-    i.end <= now ||
-    i.strike !== p.market.strike
-  )
-    return null;
-  const clear = project(
-    t.value,
-    p.side === "Up" ? b.bid : b.ask,
-    p.market.strike,
-    p.side,
-    i.end - now,
-    preset.clearBufferBp,
-  ).clear;
-  const opposite: Direction = p.side === "Up" ? "Down" : "Up";
-  const back = held(
-    i.spot.map((q) => ({ at: q.at, value: p.side === "Up" ? q.ask : q.bid })),
-    now,
-    3000,
-    (x) =>
-      (BigInt(x.value) - BigInt(p.market.strike)) * directionSign(opposite) >
-      0n,
-    1500,
-  );
-  const remaining = p.shares - p.sold,
-    bid = top(book.bids, "bid");
-  if (bid === null || remaining <= 0) return null;
-  const signal = (
-    purpose: "scale55" | "scale75" | "take88" | "emergency" | "time",
-    shares: number,
-    min: number,
-  ) => ({ purpose, shares: Math.min(remaining, shares), min });
-  if (!clear || back) return signal("emergency", remaining, 0.001);
-  if (
-    i.end - now <= preset.flattenSeconds * 1000 &&
-    (BigInt(t.value) - BigInt(p.market.strike)) * directionSign(p.side) < 0n
-  )
-    return signal("time", remaining, 0.001);
-  if (!p.stage55 && bid >= 0.55)
-    return signal("scale55", Math.floor(p.shares * 0.4), 0.55);
-  if (!p.stage75 && bid >= 0.75)
-    return signal("scale75", Math.floor(p.shares * 0.3), 0.75);
-  if (bid >= 0.88 && clear) return signal("take88", remaining, 0.88);
+import { bucketProjection } from "./bucket.ts";
+export function exitSignal(p: Position, i: Omit<ScanInput, "preset" | "config">, config: Config) {
+  const book = p.side === "Up" ? i.up : i.down, now = i.now;
+  const remaining = p.shares - p.sold;
+  if (remaining <= 0 || now - book.at > 3000 || book.at > now + 500 || i.end <= now ||
+    i.strike !== p.market.strike || i.windowSeconds !== p.market.windowSeconds) return null;
+  const quote = sellQuote(book.bids, remaining, 0.000001, p.market.feeRate, p.market.feeExponent);
+  if (!quote) return null;
+  const signal = (purpose: "profit-target" | "weakening" | "feed-gap" | "time", min = 0.001) => ({ purpose, shares: remaining, min });
+  const target = Math.ceil(p.cost * (1 + config.profitTargetBp / 10000)) - p.proceeds;
+  if (quote.cashMicros >= target) {
+    // Every accepted share at the limit must cover the net profit target, including fees.
+    let lo = 0, hi = 1;
+    for (let n = 0; n < 30; n++) {
+      const mid = (lo + hi) / 2;
+      const net = remaining * (mid - p.market.feeRate * (mid * (1-mid)) ** p.market.feeExponent);
+      if (net >= target) hi = mid; else lo = mid;
+    }
+    const limit = Math.ceil(hi * 1000000) / 1000000;
+    if (limit <= 0.99 && sellQuote(book.bids, remaining, limit, p.market.feeRate, p.market.feeExponent))
+      return signal("profit-target", limit);
+  }
+  const t = i.twap.at(-1), b = i.spot.at(-1), preset = config.presets[`${p.market.pair}:${p.market.window}`];
+  if (!t || !b || now - b.at > 1500 || b.at > now) return signal("feed-gap");
+  const estimate = bucketProjection({ now, end: i.end, windowSeconds: i.windowSeconds, reference: p.market.strike,
+    side: p.side, twap: t, oracle: i.oracle, spot: p.side === "Up" ? b.bid : b.ask,
+    impulseFrom: p.impulseFrom, retreatPct: preset.retreatPct, clearBufferBp: preset.clearBufferBp,
+    maxModelErrorBp: preset.maxModelErrorBp, latencyMs: preset.timeBufferSeconds * 1000 });
+  if (!estimate.available) return signal("feed-gap");
+  if (!estimate.clear || BigInt(estimate.headroom) * 100n <= BigInt(p.entryHeadroom) * BigInt(preset.exitHeadroomPct))
+    return signal("weakening");
+  if (i.end - now <= preset.timeBufferSeconds * 1000 &&
+    (BigInt(t.value) - BigInt(p.market.strike)) * (p.side === "Up" ? 1n : -1n) <= 0n)
+    return signal("time");
   return null;
 }
 export function reduce(
@@ -387,6 +369,7 @@ export function reduce(
 ) {
   const c = commandSchema.parse(raw),
     s = structuredClone(state);
+  check(s.strategyVersion === 2, "This retired strategy must be replaced before use.");
   let closed: Position | null = null;
   const periods = utcPeriods(now);
   if (s.daily.key !== periods.day) s.daily = { key: periods.day, pnl: 0 };
@@ -435,7 +418,7 @@ export function reduce(
       }
       s.armed = true;
       active(s, now, liveAllowed);
-      s.message = "Watching for a qualified fade.";
+      s.message = "Watching for a confirmed spot reversal.";
       break;
     case "disarm":
       s.armed = false;
@@ -462,6 +445,8 @@ export function reduce(
         now >= m.start * 1000 &&
           now < m.end * 1000 &&
           c.observation.end === m.end * 1000 &&
+          c.observation.start === m.start * 1000 &&
+          c.observation.windowSeconds === m.windowSeconds &&
           c.observation.strike === m.strike,
         "Market or strike mismatch.",
       );
@@ -476,7 +461,7 @@ export function reduce(
         config: s.config,
       });
       check(result.eligible && result.side && result.setup, result.reason);
-      const budget = stake(s.config, result.setup, s.lossStreak);
+      const budget = stake(s.config);
       check(
         budget && canEnter(s, budget, now),
         "Concurrent position, liquidity or loss limit reached.",
@@ -486,25 +471,25 @@ export function reduce(
         !s.seenMarkets.some((x) => x.slug === m.slug),
         "This window was already traded.",
       );
-      const limit = result.setup === "A" ? 0.28 : 0.12,
-        book = result.side === "Up" ? c.observation.up : c.observation.down;
-      check(
-        buyQuote(book.asks, budget, limit, m.feeRate, m.feeExponent),
-        "Insufficient ask depth within the price band.",
-      );
+      const book = result.side === "Up" ? c.observation.up : c.observation.down;
+      const plan = entryPlan(s.config, book, budget, m.feeRate, m.feeExponent);
+      check(plan.ok, plan.ok ? "" : plan.reason);
+      const limit = plan.limit;
+      check(result.impulseFrom && result.headroom && result.projection, "Missing reversal evidence.");
       s.positions.push({
         id: c.positionId,
         market: m,
         side: result.side,
         setup: result.setup,
+        impulseFrom: result.impulseFrom,
+        entryHeadroom: result.headroom,
+        entryProjection: result.projection,
         stake: budget,
         cost: 0,
         shares: 0,
         sold: 0,
         proceeds: 0,
         fees: 0,
-        stage55: false,
-        stage75: false,
         order: {
           id: c.orderId,
           side: "BUY",
@@ -688,8 +673,6 @@ export function reduce(
           p.sold += shares;
           p.proceeds += cash;
           if (s.mode === "paper") s.cash += cash;
-          if (o.purpose === "scale55") p.stage55 = true;
-          if (o.purpose === "scale75") p.stage75 = true;
         }
         p.fees += fee;
         p.fills.push(...c.fills);

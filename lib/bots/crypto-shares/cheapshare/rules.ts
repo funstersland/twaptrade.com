@@ -1,5 +1,6 @@
 import type { Config, Preset } from "./config.ts";
 import type { Direction } from "./identity.ts";
+import { bucketProjection } from "./bucket.ts";
 export type Point = { at: number; value: string };
 export type Quote = { at: number; bid: string; ask: string };
 export type Level = { price: string; size: string };
@@ -35,32 +36,6 @@ export function beyond(
     BigInt(reference) * BigInt(bp)
   );
 }
-export function project(
-  t: string,
-  spot: string,
-  r: string,
-  side: Direction,
-  tauMs: number,
-  bufferBp: number,
-  windowMs = 60000,
-) {
-  const T = BigInt(t),
-    S = BigInt(spot),
-    R = BigInt(r),
-    sign = directionSign(side),
-    weight = BigInt(Math.max(0, Math.min(windowMs, Math.floor(tauMs))));
-  const projected = T + ((S - T) * weight) / BigInt(windowMs),
-    clear = (projected - R) * sign * 10000n >= R * BigInt(bufferBp);
-  const distance = R * BigInt(bufferBp) - (T - R) * sign * 10000n,
-    velocity = (S - T) * sign * 10000n;
-  const need =
-    distance <= 0n
-      ? 0
-      : velocity <= 0n
-        ? Infinity
-        : Number((distance * BigInt(windowMs) + velocity - 1n) / velocity);
-  return { projected: projected.toString(), clear, needMs: need };
-}
 export function held(
   points: Point[],
   now: number,
@@ -91,9 +66,13 @@ export function top(levels: Level[], side: "bid" | "ask") {
 }
 export type ScanInput = {
   now: number;
+  start: number;
   end: number;
+  watchingSince: number | null;
+  windowSeconds: 30 | 60;
   strike: string | null;
   twap: Point[];
+  oracle: Point[];
   spot: Quote[];
   up: { bids: Level[]; asks: Level[]; at: number };
   down: { bids: Level[]; asks: Level[]; at: number };
@@ -102,131 +81,88 @@ export type ScanInput = {
 };
 export function scan(i: ScanInput) {
   const gates: { name: string; ok: boolean }[] = [];
-  const gate = (name: string, ok: boolean) => {
-    gates.push({ name, ok });
-    return ok;
-  };
-  let side: Direction | null = null,
-    setup: "A" | "B" | null = null,
-    ask: number | null = null,
-    projection: string | null = null,
-    needMs: number | null = null;
+  const gate = (name: string, ok: boolean) => { gates.push({ name, ok }); return ok; };
+  let side: Direction | null = null, setup: "flip" | null = null;
+  let ask: number | null = null;
+  let bucket: ReturnType<typeof bucketProjection> | null = null;
+  let impulseFrom: string | null = null;
   const result = () => ({
-    eligible: gates.every((g) => g.ok),
-    side,
-    setup,
-    ask,
-    projection,
-    needMs,
-    gates,
-    reason: gates.find((g) => !g.ok)?.name || "Entry eligible",
+    eligible: gates.every(g => g.ok), side, setup, ask, impulseFrom,
+    projection: bucket?.available ? bucket.projected : null,
+    headroom: bucket?.available ? bucket.headroom : null,
+    requiredSpot: bucket?.available ? bucket.requiredSpot : null,
+    conservativeSpot: bucket?.available ? bucket.conservativeSpot : null,
+    modelError: bucket?.available ? bucket.modelError : null,
+    windowSeconds: i.windowSeconds,
+    secondsLeft: Math.max(0, (i.end - i.now) / 1000),
+    gates, reason: gates.find(g => !g.ok)?.name || "Entry eligible",
   });
   gate("Pair/window enabled", i.preset.enabled);
   gate("News block off", !i.config.newsBlocked);
-  if (!gate("Price-to-Beat locked", !!i.strike && BigInt(i.strike) > 0n))
-    return result();
-  const r = i.strike!,
-    t = i.twap.at(-1),
-    b = i.spot.at(-1),
-    tau = i.end - i.now;
-  if (
-    !gate(
-      "Fresh TWAP, Binance and CLOB",
-      !!t &&
-        !!b &&
-        i.now - t.at <= 3000 &&
-        i.now - b.at <= 1500 &&
-        i.now - i.up.at <= 3000 &&
-        i.now - i.down.at <= 3000 &&
-        t.at <= i.now &&
-        b.at <= i.now &&
-        i.up.at <= i.now + 500 &&
-        i.down.at <= i.now + 500,
-    )
-  )
-    return result();
-  const gap = bpGap(t!.value, r);
-  side = gap > 0 ? "Down" : "Up";
-  const crowd: Direction = side === "Up" ? "Down" : "Up";
-  gate(
-    "Mature TWAP crowd",
-    held(i.twap, i.now, i.preset.crowdSeconds * 1000, (p) =>
-      beyond(p.value, r, crowd, i.preset.crowdBp),
-    ),
-  );
-  const book = side === "Up" ? i.up : i.down,
-    opposite = side === "Up" ? i.down : i.up;
+  gate("Watching this round from its opening", i.watchingSince !== null && i.watchingSince <= i.start + 2000 && i.now >= i.start);
+  if (!gate("Price-to-Beat locked", !!i.strike && BigInt(i.strike) > 0n)) return result();
+  const r = i.strike!, t = i.twap.at(-1), b = i.spot.at(-1), c = i.oracle.at(-1);
+  if (!gate("Fresh Chainlink, spot and executable books", !!t && !!b && !!c &&
+    i.now - t.at <= 2500 && i.now - c.at <= 2500 && i.now - b.at <= 1500 &&
+    i.now - i.up.at <= 3000 && i.now - i.down.at <= 3000 &&
+    t.at <= i.now && c.at <= i.now && b.at <= i.now &&
+    i.up.at <= i.now + 500 && i.down.at <= i.now + 500)) return result();
+  if (!gate("TWAP still has an established winning side", t!.value !== r)) return result();
+  side = BigInt(t!.value) < BigInt(r) ? "Up" : "Down";
+  setup = "flip";
+  const leader: Direction = side === "Up" ? "Down" : "Up";
+  const baselineAt = i.now - i.preset.impulseSeconds * 1000;
+  const baseline = i.spot.findLast(p => p.at <= baselineAt);
+  const pastTwap = i.twap.filter(p => p.at <= baselineAt);
+  gate("A winner was established before the impulse", baselineAt - i.preset.leaderSeconds * 1000 >= i.start &&
+    held(pastTwap, baselineAt, i.preset.leaderSeconds * 1000,
+      p => (BigInt(p.value) - BigInt(r)) * directionSign(leader) > 0n, 2500));
+  if (!gate("Spot baseline is available", !!baseline && baselineAt - baseline.at <= 1500)) return result();
+  impulseFrom = side === "Up" ? baseline!.ask : baseline!.bid;
+  const current = side === "Up" ? b!.bid : b!.ask;
+  const distance = (BigInt(r) - BigInt(impulseFrom)) * directionSign(side);
+  const change = (BigInt(current) - BigInt(impulseFrom)) * directionSign(side);
+  gate("A sudden move reverses the previous spot direction", distance > 0n && change > 0n &&
+    change * 1000n >= distance * BigInt(Math.round(i.preset.impulseMultiple * 1000)));
+  gate("Spot holds beyond the strike", held(i.spot.map(p => ({ at: p.at, value: side === "Up" ? p.bid : p.ask })),
+    i.now, i.preset.holdSeconds * 1000, p => (BigInt(p.value) - BigInt(r)) * directionSign(side!) > 0n, 1500));
+  gate("Chainlink spot confirms the reversal", (BigInt(c!.value) - BigInt(r)) * directionSign(side) > 0n);
+  gate("Time remains to execute", i.end - i.now > i.preset.timeBufferSeconds * 1000);
+  bucket = bucketProjection({ now: i.now, end: i.end, windowSeconds: i.windowSeconds, reference: r,
+    side, twap: t!, oracle: i.oracle, spot: current, impulseFrom,
+    retreatPct: i.preset.retreatPct, clearBufferBp: i.preset.clearBufferBp,
+    maxModelErrorBp: i.preset.maxModelErrorBp, latencyMs: i.preset.timeBufferSeconds * 1000 });
+  gate(bucket.reason, bucket.available && bucket.clear);
+  const book = side === "Up" ? i.up : i.down;
   ask = top(book.asks, "ask");
-  const bid = top(book.bids, "bid"),
-    expensive = top(opposite.bids, "bid");
-  if (ask !== null && ask >= 0.15 && ask <= 0.28) setup = "A";
-  else if (i.config.setupB && ask !== null && ask >= 0.01 && ask <= 0.12)
-    setup = "B";
-  gate("Cheap ask band", !!setup);
-  gate(
-    "One-sided CLOB",
-    expensive !== null &&
-      expensive >= 0.7 &&
-      (setup !== "A" || expensive <= 0.88),
-  );
-  gate(
-    "Not already decided",
-    !(
-      expensive !== null &&
-      expensive >= 0.92 &&
-      Math.abs(gap) >= i.config.decidedGapBp
-    ),
-  );
-  const mid = (BigInt(b!.bid) + BigInt(b!.ask)) / 2n,
-    S = side === "Up" ? b!.bid : b!.ask;
-  gate("Binance lead", beyond(mid.toString(), r, side, i.preset.leadBp));
-  const spots = i.spot.map((p) => ({
-    at: p.at,
-    value: side === "Up" ? p.bid : p.ask,
-  }));
-  gate(
-    "Spot held beyond strike",
-    held(
-      spots,
-      i.now,
-      i.preset.holdSeconds * 1000,
-      (p) => beyond(p.value, r, side!, i.preset.holdBufferBp),
-      1500,
-    ),
-  );
-  const p = project(t!.value, S, r, side, tau, i.preset.clearBufferBp);
-  projection = p.projected;
-  needMs = Number.isFinite(p.needMs) ? p.needMs : null;
-  gate("CLEAR projector", p.clear);
-  gate("Time for clearance", tau >= p.needMs + 8000 && tau > 0);
-  const old = i.twap.findLast((x) => x.at <= i.now - 5000);
-  gate(
-    "TWAP slope agrees",
-    !!old &&
-      i.now - old.at <= 8000 &&
-      (BigInt(t!.value) - BigInt(old.value)) * directionSign(side) > 0n,
-  );
-  const recent = i.spot.filter((x) => x.at >= i.now - 2000),
-    wickPoints = recent.map((x) => (BigInt(x.bid) + BigInt(x.ask)) / 2n);
-  const anchor = i.spot.findLast((x) => x.at <= i.now - 2000);
-  if (anchor)
-    wickPoints.unshift((BigInt(anchor.bid) + BigInt(anchor.ask)) / 2n);
-  const range = wickPoints.length
-    ? wickPoints.reduce((a, v) => (v > a ? v : a)) -
-      wickPoints.reduce((a, v) => (v < a ? v : a))
-    : 0n;
-  const lead = mid > BigInt(r) ? mid - BigInt(r) : BigInt(r) - mid;
-  gate(
-    "Two-second move is not a wick",
-    !!anchor &&
-      i.now - anchor.at <= 3500 &&
-      range * 10000n <= lead * BigInt(Math.round(i.config.wickRatio * 10000)),
-  );
-  gate(
-    "Spread at most 4 cents",
-    ask !== null && bid !== null && ask >= bid && ask - bid <= 0.040000001,
-  );
+  const bid = top(book.bids, "bid");
+  gate("Executable entry and exit quotes", ask !== null && bid !== null && bid <= ask);
   return result();
+}
+
+// The price limit follows actual depth; there is no fixed cheap-share price band.
+export function entryPlan(config: Config, book: { asks: Level[]; bids: Level[] }, budget: number,
+  feeRate: number, exponent: number) {
+  const bid = top(book.bids, "bid"), ask = top(book.asks, "ask");
+  if (bid === null || ask === null || bid > ask) return { ok: false as const, reason: "Invalid or crossed order book" };
+  const quote = buyQuote(book.asks, budget, 0.999999, feeRate, exponent);
+  if (!quote) return { ok: false as const, reason: "Insufficient ask depth for this allocation" };
+  let cash = budget / 1e6, limit = 0;
+  for (const l of [...book.asks].sort((a,b) => Number(a.price) - Number(b.price))) {
+    const p = Number(l.price), size = Number(l.size);
+    if (!(p > 0 && p < 1 && size > 0)) continue;
+    cash -= Math.min(size, cash / (p + feeRate * (p * (1-p)) ** exponent)) * (p + feeRate * (p * (1-p)) ** exponent);
+    limit = p;
+    if (cash < 0.000001) break;
+  }
+  const upside = quote.sharesMicros - budget;
+  if (upside * 10000 < budget * Math.max(config.minimumUpsideBp, config.profitTargetBp))
+    return { ok: false as const, reason: "Insufficient profit room after entry costs" };
+  const exit = sellQuote(book.bids, quote.sharesMicros, 0.000001, feeRate, exponent);
+  if (!exit) return { ok: false as const, reason: "Insufficient exit liquidity" };
+  if ((budget - exit.cashMicros) * 10000 > budget * config.maximumEntryLossBp)
+    return { ok: false as const, reason: "Spread and fees consume too much of the allocation" };
+  return { ok: true as const, quote, limit, immediateExit: exit.cashMicros, upside };
 }
 export function buyQuote(
   asks: Level[],
@@ -304,14 +240,22 @@ export function sellQuote(
     price: decimal((gross * E18) / BigInt(sharesMicros)),
   };
 }
-export function stake(config: Config, setup: "A" | "B", lossStreak: number) {
-  if (config.martingale && lossStreak > config.martingaleSteps) return null;
-  const bp = setup === "B" ? config.setupBRiskBp : config.riskBp;
-  return (
-    Math.floor((config.bankrollCents * bp) / 10000) *
-    10000 *
-    (config.martingale ? 2 ** lossStreak : 1)
-  );
+
+// Choose an observed price level: computed net-profit floors need not be valid CLOB ticks.
+export function exitPlan(bids: Level[], sharesMicros: number, floor: number, feeRate: number, exponent: number) {
+  const quote = sellQuote(bids, sharesMicros, floor, feeRate, exponent);
+  if (!quote) return null;
+  let remaining = BigInt(sharesMicros);
+  for (const l of [...bids].sort((a,b) => Number(b.price) - Number(a.price))) {
+    const price = Number(l.price);
+    if (!(price >= floor && price < 1 && Number(l.size) > 0)) continue;
+    remaining -= fixed(l.size, 6);
+    if (remaining <= 0n) return { quote, limit: price };
+  }
+  return null;
+}
+export function stake(config: Config) {
+  return Math.floor(Math.min(config.tradeBudgetCents, config.bankrollCents * config.riskBp / 10000)) * 10000;
 }
 export function utcPeriods(now: number) {
   const d = new Date(now);

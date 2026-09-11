@@ -71,7 +71,7 @@ export async function GET(req: Request) {
     const [rows, f] = await Promise.all([
       db
         .prepare(
-          "SELECT * FROM cheapshare_runs WHERE user_id=? AND bot_id=? ORDER BY created_at",
+          "SELECT * FROM cheapshare_runs WHERE user_id=? AND bot_id=? AND strategy_version=2 ORDER BY created_at",
         )
         .bind(u.id, b.id)
         .all<RunRow>(),
@@ -151,7 +151,7 @@ export async function POST(req: Request) {
         now = new Date().toISOString();
       const existing = await db
         .prepare(
-          "SELECT id FROM cheapshare_runs WHERE user_id=? AND bot_id=? AND mode=?",
+          "SELECT id FROM cheapshare_runs WHERE user_id=? AND bot_id=? AND mode=? AND strategy_version=2",
         )
         .bind(u.id, b.id, c.mode)
         .first();
@@ -163,7 +163,7 @@ export async function POST(req: Request) {
       await db.batch([
         db
           .prepare(
-            "INSERT INTO cheapshare_runs (id,user_id,bot_id,mode,revision,last_event,state_json,wallet_address,wallet_cipher,created_at,updated_at) VALUES (?,?,?,?,0,?,?,?,?,?,?)",
+            "INSERT INTO cheapshare_runs (id,user_id,bot_id,mode,strategy_version,revision,last_event,state_json,wallet_address,wallet_cipher,created_at,updated_at) VALUES (?,?,?,?,2,0,?,?,?,?,?,?)",
           )
           .bind(
             id,
@@ -183,7 +183,7 @@ export async function POST(req: Request) {
     }
     let r = await db
       .prepare(
-        "SELECT * FROM cheapshare_runs WHERE id=? AND user_id=? AND bot_id=?",
+        "SELECT * FROM cheapshare_runs WHERE id=? AND user_id=? AND bot_id=? AND strategy_version=2",
       )
       .bind(c.runId, u.id, b.id)
       .first<RunRow>();
@@ -203,7 +203,7 @@ export async function POST(req: Request) {
             throw e;
           const latest = await db
             .prepare(
-              "SELECT * FROM cheapshare_runs WHERE id=? AND user_id=? AND bot_id=?",
+              "SELECT * FROM cheapshare_runs WHERE id=? AND user_id=? AND bot_id=? AND strategy_version=2",
             )
             .bind(c.runId, u.id, b.id)
             .first<RunRow>();

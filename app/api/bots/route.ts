@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       .prepare("SELECT strategy_key FROM bots WHERE id=?")
       .bind(input.botId)
       .first<{ strategy_key: string | null }>();
-    if (strategy?.strategy_key === "crypto-shares.continuation.btc5m" || strategy?.strategy_key === "crypto-shares.cheapshare.ctr-m")
+    if (strategy?.strategy_key === "crypto-shares.continuation.btc5m" || strategy?.strategy_key === "crypto-shares.cheapshare.flip")
       throw new HttpError(
         409,
         "Deploy this bot using its own settings and controls.",

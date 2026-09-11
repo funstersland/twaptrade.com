@@ -38,6 +38,11 @@ type Row = {
   setup?: string;
   ask?: number;
   projection?: string;
+  requiredSpot?: string;
+  conservativeSpot?: string;
+  headroom?: string;
+  windowSeconds?: number;
+  secondsLeft?: number;
   gates?: { name: string; ok: boolean }[];
   marks?: { id: string; value: number | null }[];
 };
@@ -66,6 +71,7 @@ type Market = {
   strikeSource: string | null;
   twap: { at: number; value: string } | null;
   spot: { at: number; bid: string; ask: string } | null;
+  spotSource?: string;
   error: string | null;
   end: number | null;
 };
@@ -217,19 +223,19 @@ export function CheapshareBot() {
     <section className="panel cs-bot" aria-label="CheapShare bot">
       <div className="row-between cs-heading">
         <div>
-          <span className="bot-family-label">CRYPTO SHARES · CTR-M</span>
+          <span className="bot-family-label">CRYPTO SHARES · REVERSAL</span>
           <h2>
             CheapShare
             <span className="cs-rule" />
           </h2>
-          <p className="muted">A measured fade of the crowd.</p>
+          <p className="muted">Catch the change that can turn the round.</p>
         </div>
         <span className="tag">6 pairs · 5m / 15m</span>
       </div>
       <div className="cs-description">
         <p>
-          Buy the cheap side after spot holds beyond Price-to-Beat and projected
-          TWAP clears the strike.
+          Watch for an established winner to face a sudden spot reversal. Enter only
+          when the stressed TWAP estimate clears the strike and executable prices leave profit room.
         </p>
         <button
           className="button ghost"
@@ -362,7 +368,7 @@ export function CheapshareBot() {
                     >
                       {p.market.pair} · {p.market.window / 60}m
                     </a>,
-                    `${p.side} · Setup ${p.setup}`,
+                    `${p.side} · Reversal`,
                     p.shares
                       ? `${(((p.cost - p.fills.filter((f) => f.side === "BUY").reduce((n, f) => n + f.feeMicros, 0)) / p.shares) * 100).toFixed(3)}¢`
                       : "Awaiting fill",
@@ -372,7 +378,7 @@ export function CheapshareBot() {
                       ? "Inventory mismatch"
                       : p.order
                         ? `${p.order.side} · ${p.order.status}`
-                        : `55¢ ${p.stage55 ? "✓" : "—"} · 75¢ ${p.stage75 ? "✓" : "—"}`,
+                        : "Watching reversal strength",
                   ];
                 })}
                 empty="No open positions."
@@ -404,7 +410,11 @@ export function CheapshareBot() {
                             {row.ask == null
                               ? "—"
                               : `${(row.ask * 100).toFixed(1)}¢`}{" "}
-                            · Projected TWAP {price(row.projection)}
+                            · Estimated settlement TWAP {price(row.projection)}
+                            <br />
+                            Required sustained spot {price(row.requiredSpot)} · Stressed spot {price(row.conservativeSpot)}
+                            <br />
+                            {row.secondsLeft?.toFixed(0) ?? "—"}s remaining · {row.windowSeconds ?? "—"}s lookback
                           </p>
                         )}
                         {row?.gates?.map((g) => (
@@ -512,7 +522,7 @@ export function CheapshareBot() {
               "Market",
               "Price-to-Beat",
               "Chainlink TWAP",
-              "Binance mid (USDT)",
+              "Spot mid",
               "Source",
             ]}
             rows={(data?.feed?.markets || []).map((m) => [
@@ -526,12 +536,12 @@ export function CheapshareBot() {
                     ((BigInt(m.spot.bid) + BigInt(m.spot.ask)) / 2n).toString(),
                   )
                 : "—",
-              m.error || m.strikeSource || "Waiting for opening reference",
+              m.error || [m.spotSource, m.strikeSource || "Waiting for opening reference"].filter(Boolean).join(" · "),
             ])}
             empty="No public feed observations yet."
           />
           <p className="small muted">
-            Binance USDT prices are used as a USD proxy. A missing spot pair or
+            Binance USDT and Hyperliquid HYPE/USDC spot quotes are USD proxies. Chainlink supplies the official spot and TWAP observations. A missing spot pair or
             an unverified strike blocks that market.
           </p>
         </>
@@ -585,8 +595,11 @@ export function CheapshareBot() {
                 100,
                 0.01,
               )}
-              {number("Setup A risk (%)", "riskBp", 0.01, 2, 100, 0.01)}
-              {number("Setup B risk (%)", "setupBRiskBp", 0.01, 1, 100, 0.01)}
+              {number("Allocation cap per trade ($)", "tradeBudgetCents", 1, 10000, 100, 0.01)}
+              {number("Maximum bankroll per trade (%)", "riskBp", 0.01, 2, 100, 0.01)}
+              {number("Net profit target (%)", "profitTargetBp", 1, 1000, 100, 1)}
+              {number("Minimum profit room (%)", "minimumUpsideBp", 1, 100, 100, 1)}
+              {number("Maximum entry spread + fees (%)", "maximumEntryLossBp", 1, 30, 100, 1)}
               {number("Daily loss limit (%)", "dailyLossBp", 1, 10, 100, 0.01)}
               {number(
                 "Weekly loss limit (%)",
@@ -596,12 +609,9 @@ export function CheapshareBot() {
                 100,
                 0.01,
               )}
-              {number("Martingale maximum steps", "martingaleSteps", 1, 5)}
             </div>
             <div className="cs-switches">
               {[
-                ["setupB", "Enable Setup B (ask ≤12¢)"],
-                ["martingale", "Enable martingale after a loss"],
                 ["newsBlocked", "Block new entries for news"],
               ].map(([k, label]) => (
                 <label key={k}>
@@ -617,9 +627,9 @@ export function CheapshareBot() {
               ))}
             </div>
             <p className="small muted">
-              Sizing uses this strategy bankroll. Paper cash is simulated. Loss
-              limits include the remaining risk of open positions, reset on UTC
-              days and Mondays, and apply before martingale entries.
+              Allocation uses the lower of the dollar cap and bankroll percentage. Paper cash is simulated.
+              There is no fixed entry-price band. Entry costs, exit liquidity and available profit room must pass.
+              Loss limits include open exposure and reset on UTC days and Mondays.
             </p>
             <details className="cs-details">
               <summary>
@@ -649,15 +659,17 @@ export function CheapshareBot() {
                   <div className="cs-form-grid">
                     {(
                       [
-                        ["crowdBp", "Crowd gap (bp)", 1, 100],
-                        ["crowdSeconds", "Crowd hold (s)", 10, 120],
-                        ["leadBp", "Spot lead (bp)", 1, 100],
-                        ["holdSeconds", "Spot hold (s)", 3, 30],
-                        ["holdBufferBp", "Hold buffer (bp)", 1, 100],
-                        ["clearBufferBp", "CLEAR buffer (bp)", 1, 100],
-                        ["flattenSeconds", "Late flatten (s)", 5, 60],
+                        ["leaderSeconds", "Established winner (s)", 3, 60, 1],
+                        ["impulseSeconds", "Sudden move window (s)", 3, 15, 1],
+                        ["impulseMultiple", "Move / previous gap", 1.25, 10, 0.25],
+                        ["holdSeconds", "Reversal confirmation (s)", 1, 10, 1],
+                        ["clearBufferBp", "Settlement buffer (bp)", 0.05, 20, 0.05],
+                        ["maxModelErrorBp", "Maximum TWAP model error (bp)", 0.05, 5, 0.05],
+                        ["retreatPct", "Spot retracement stress (%)", 10, 75, 1],
+                        ["timeBufferSeconds", "Execution reserve (s)", 2, 10, 1],
+                        ["exitHeadroomPct", "Exit at remaining strength (%)", 10, 90, 1],
                       ] as const
-                    ).map(([k, label, min, max]) => (
+                    ).map(([k, label, min, max, step]) => (
                       <label className="cs-field" key={k}>
                         {label}
                         <Input
@@ -665,7 +677,7 @@ export function CheapshareBot() {
                           required
                           min={min}
                           max={max}
-                          step="1"
+                          step={step}
                           value={p[k]}
                           onChange={(e) =>
                             setConfig({
@@ -683,17 +695,6 @@ export function CheapshareBot() {
                 </fieldset>
               ))}
             </details>
-            <div className="cs-form-grid">
-              {number(
-                "Maximum wick / lead ratio",
-                "wickRatio",
-                0.2,
-                2,
-                1,
-                0.05,
-              )}
-              {number("Decided market gap (bp)", "decidedGapBp", 20, 200)}
-            </div>
             {mode === "live" && (
               <fieldset className="cs-preset">
                 <legend>Polymarket connection</legend>
@@ -765,16 +766,14 @@ export function CheapshareBot() {
             <>
               <p>
                 Bankroll {money(reviewed.state.config.bankrollCents)} · risk{" "}
-                {reviewed.state.config.riskBp / 100}% per Setup A trade · daily
+                {reviewed.state.config.riskBp / 100}% per trade, capped at {money(reviewed.state.config.tradeBudgetCents)} · daily
                 limit {reviewed.state.config.dailyLossBp / 100}% · weekly limit{" "}
                 {reviewed.state.config.weeklyLossBp / 100}%.
               </p>
               <p className="small muted">
-                Up to two positions. Setup B{" "}
-                {reviewed.state.config.setupB ? "on" : "off"}, martingale{" "}
-                {reviewed.state.config.martingale ? "on" : "off"}. These are
-                editable strategy defaults, not tested performance claims. USDT
-                is used as a USD proxy; the projector estimates future TWAP.
+                Up to two positions. Net profit target {reviewed.state.config.profitTargetBp / 100}%.
+                A weakening reversal triggers an earlier exit, which can realize a loss.
+                The TWAP projection is an estimate, not a guaranteed outcome.
               </p>
               <label className="cs-ack">
                 <input

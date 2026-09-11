@@ -51,6 +51,7 @@ export function parseMarket(m, pair, window, start) {
     slug,
     pair,
     window,
+    windowSeconds: 60,
     start,
     end: start + window,
     conditionId: m.conditionId,
@@ -87,12 +88,30 @@ export async function orderBook(token) {
 export class Feeds {
   constructor() {
     this.twap = new Map();
+    this.oracle = new Map();
+    this.continuity = new Map();
     this.spot = new Map();
     this.available = new Set();
     this.opening = new Map();
     this.stopped = false;
     this.socket = null;
+    this.hypeAvailable = false;
     this.stream = null;
+  }
+  observe(key, at, maxGap) {
+    const old = this.continuity.get(key);
+    if (!old || at - old.last > maxGap) this.continuity.set(key, { since: at, last: at });
+    else if (at > old.last) old.last = at;
+  }
+  addOracle(p) {
+    const pair = p.symbol?.split("/")[0]?.toUpperCase();
+    if (!PAIRS.includes(pair)) return;
+    const at = Number(p.timestamp), value = fixed(String(p.value)).toString();
+    const points = this.oracle.get(pair) || [];
+    if (!Number.isSafeInteger(at) || at > Date.now() + 1000 || BigInt(value) <= 0n || points.at(-1)?.at >= at) return;
+    this.observe(`oracle:${pair}`, at, 2500);
+    points.push({ at, value });
+    this.oracle.set(pair, points.filter(q => q.at >= at - 125000).slice(-1000));
   }
   addTwap(p) {
     const pair = p.symbol?.split("/")[0]?.toUpperCase();
@@ -106,6 +125,7 @@ export class Feeds {
       points.at(-1)?.at >= at
     )
       return;
+    this.observe(`twap:${pair}`, at, 2500);
     points.push({ at, value });
     this.twap.set(pair, points.filter((p) => p.at >= at - 125000).slice(-500));
     for (const w of [300, 900])
@@ -115,15 +135,15 @@ export class Feeds {
       if (Number(k.split(":")[2]) < Date.now() / 1000 - 1800)
         this.opening.delete(k);
   }
-  addSpot(q) {
-    const pair = q.s?.replace(/USDT$/, "");
-    if (!this.available.has(pair)) return;
-    const at = Date.now(),
+  addSpot(q, pair = q.s?.replace(/USDT$/, "")) {
+    if (!this.available.has(pair) && !(pair === "HYPE" && this.hypeAvailable)) return;
+    const at = q.at ?? Date.now(),
       bid = fixed(q.b).toString(),
       ask = fixed(q.a).toString();
-    if (BigInt(bid) <= 0n || BigInt(ask) < BigInt(bid)) return;
+    if (!Number.isSafeInteger(at) || at > Date.now() + 500 || Date.now() - at > 1500 || BigInt(bid) <= 0n || BigInt(ask) < BigInt(bid)) return;
     const points = this.spot.get(pair) || [];
     if (points.at(-1)?.sequence >= q.u) return;
+    this.observe(`spot:${pair}`, at, 1500);
     points.push({ at, bid, ask, sequence: q.u });
     this.spot.set(pair, points.filter((p) => p.at >= at - 20000).slice(-10000));
   }
@@ -132,6 +152,7 @@ export class Feeds {
     while (!this.stopped) {
       try {
         this.stream = await client.subscribe([
+          { topic: "prices.crypto.chainlink", symbols: PAIRS.map(p => `${p.toLowerCase()}/usd`) },
           {
             topic: "prices.crypto.chainlink.twap",
             windowSeconds: 60,
@@ -140,7 +161,8 @@ export class Feeds {
         ]);
         for await (const e of this.stream) {
           try {
-            this.addTwap(e.payload);
+            if (e.topic === "prices.crypto.chainlink.twap") this.addTwap(e.payload);
+            else if (e.topic === "prices.crypto.chainlink") this.addOracle(e.payload);
           } catch {}
           if (this.stopped) break;
         }
@@ -198,9 +220,37 @@ export class Feeds {
       if (!this.stopped) await new Promise((r) => setTimeout(r, 2000));
     }
   }
+  async hyperliquid() {
+    while (!this.stopped) {
+      try {
+        const response = await fetch("https://api.hyperliquid.xyz/info", { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "spotMeta" }), signal: AbortSignal.timeout(4000) });
+        if (!response.ok) throw Error("HYPE spot metadata unavailable");
+        const meta = await response.json();
+        const hypes = meta.tokens.filter(t => t.name === "HYPE"), dollars = meta.tokens.filter(t => t.name === "USDC");
+        if (hypes.length !== 1 || dollars.length !== 1) throw Error("Ambiguous HYPE spot identity");
+        const pairs = meta.universe.filter(p => p.tokens[0] === hypes[0].index && p.tokens[1] === dollars[0].index);
+        if (pairs.length !== 1) throw Error("HYPE/USDC spot market unavailable");
+        const coin = pairs[0].name;
+        while (!this.stopped) {
+          const begun = Date.now();
+          const response = await fetch("https://api.hyperliquid.xyz/info", { method: "POST",
+            headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "l2Book", coin }), signal: AbortSignal.timeout(2500) });
+          if (!response.ok) throw Error("HYPE spot snapshot unavailable");
+          const q = await response.json();
+          if (q.coin !== coin || !q.levels?.[0]?.[0] || !q.levels?.[1]?.[0]) throw Error("Invalid HYPE spot snapshot");
+          this.hypeAvailable = true;
+          this.addSpot({ b: q.levels[0][0].px, a: q.levels[1][0].px, u: q.time, at: q.time }, "HYPE");
+          await new Promise(resolve => setTimeout(resolve, Math.max(10, 1000-(Date.now()-begun))));
+        }
+      } catch { this.hypeAvailable = false; }
+      if (!this.stopped) await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
   start() {
     void this.chainlink();
     void this.binance();
+    void this.hyperliquid();
   }
   stop() {
     this.stopped = true;
@@ -210,6 +260,11 @@ export class Feeds {
   observation(m, books, now = Date.now()) {
     return {
       now,
+      start: m.start * 1000,
+      windowSeconds: m.windowSeconds,
+      watchingSince: ["twap", "spot", "oracle"].every(k => this.continuity.has(`${k}:${m.pair}`))
+        ? Math.max(...["twap", "spot", "oracle"].map(k => this.continuity.get(`${k}:${m.pair}`).since)) : null,
+      oracle: this.oracle.get(m.pair) || [],
       end: m.end * 1000,
       strike: m.strike,
       twap: this.twap.get(m.pair) || [],
