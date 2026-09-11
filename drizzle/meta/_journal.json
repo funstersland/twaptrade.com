@@ -78,6 +78,13 @@
       "when": 1789132562462,
       "tag": "0010_wonderful_firestar",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789135264615,
+      "tag": "0011_soft_black_widow",
+      "breakpoints": true
     }
   ]
 }

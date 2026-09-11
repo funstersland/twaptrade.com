@@ -1,0 +1,427 @@
+import { createPublicClient } from "@polymarket/client";
+import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+import {
+  CandleBook,
+  toE18,
+} from "../../lib/bots/crypto-shares/scalper/candles.ts";
+import {
+  analyze,
+  nextStart,
+  entryWindow,
+  nextStake,
+  quoteBuy,
+} from "../../lib/bots/crypto-shares/scalper/rules.ts";
+import { entryGate } from "../../lib/bots/crypto-shares/scalper/state.ts";
+import { marketAt, orderBook } from "./scalper-market.mjs";
+import {
+  connectionState,
+  prepareBuy,
+  submitBuy,
+  confirmedFill,
+  geographyAllowed,
+} from "./scalper-live.mjs";
+try {
+  process.loadEnvFile(".dev.vars");
+} catch {}
+const origin = process.env.TWAP_SCALPER_APP_ORIGIN || "http://localhost:5173",
+  url = new URL(origin);
+if (
+  url.protocol !== "https:" &&
+  !["localhost", "127.0.0.1"].includes(url.hostname)
+)
+  throw Error("HTTPS is required outside localhost");
+if (!process.env.TWAP_SCALPER_RUNNER_TOKEN)
+  throw Error("Scalper runner token is not configured");
+const lease = randomUUID(),
+  endpoint = origin + "/api/scalper/runner",
+  client = createPublicClient();
+let stopped = false,
+  latest = null,
+  candles = new CandleBook(),
+  jobs = { runs: [], entriesEnabled: false },
+  geoAllowed = false,
+  geoAt = 0,
+  stream = null,
+  clockOK = false;
+const plans = new Map(),
+  attempted = new Set();
+async function bridge(payload) {
+  const r = await fetch(endpoint, {
+    method: payload ? "POST" : "GET",
+    headers: {
+      authorization: `Bearer ${process.env.TWAP_SCALPER_RUNNER_TOKEN}`,
+      "content-type": "application/json",
+    },
+    ...(payload ? { body: JSON.stringify({ ...payload, lease }) } : {}),
+    signal: AbortSignal.timeout(4000),
+  });
+  const d = await r.json();
+  if (!r.ok) {
+    const e = Error(d.message || "Scalper service unavailable");
+    e.status = r.status;
+    throw e;
+  }
+  return d;
+}
+async function command(run, command, book) {
+  const payload = {
+    action: "command",
+    runId: run.id,
+    revision: run.revision,
+    eventId: randomUUID(),
+    command,
+    ...(book ? { book } : {}),
+  };
+  // Retries only replay an idempotent journal event, never a provider order.
+  let result;
+  for (let i = 0; i < 2; i++)
+    try {
+      result = await bridge(payload);
+      break;
+    } catch (e) {
+      if (i || (e.status && e.status < 500)) throw e;
+    }
+  if (result.state) {
+    run.state = result.state;
+    run.revision = result.revision;
+  } else if (result.duplicate) {
+    const refreshed = await bridge();
+    const current = refreshed.runs.find((r) => r.id === run.id);
+    if (current) Object.assign(run, current);
+  }
+  return { result, id: payload.eventId };
+}
+async function streamPrices() {
+  while (!stopped)
+    try {
+      stream = await client.subscribe([
+        {
+          topic: "prices.crypto.chainlink.twap",
+          windowSeconds: 60,
+          symbols: ["btc/usd"],
+        },
+      ]);
+      for await (const event of stream) {
+        const p = event.payload;
+        if (p.symbol !== "btc/usd" || p.windowSeconds !== 60) continue;
+        const tick = { at: Number(p.timestamp), value: toE18(p.value) };
+        if (candles.push(tick, Date.now())) latest = tick;
+        if (stopped) break;
+      }
+    } catch {
+      if (!stopped) await sleep(2000);
+    }
+}
+async function heartbeat() {
+  if (Date.now() - geoAt > 30000) {
+    geoAllowed = await geographyAllowed().catch(() => false);
+    geoAt = Date.now();
+  }
+  await bridge({
+    action: "heartbeat",
+    latest,
+    candles: candles.snapshot(),
+    geoAllowed,
+    message:
+      latest && Date.now() - latest.at < 3000
+        ? "TWAP candle analysis active"
+        : "Waiting for fresh TWAP observations",
+  });
+  const sent = Date.now();
+  jobs = await bridge();
+  clockOK = Math.abs(jobs.now - (sent + Date.now()) / 2) < 1000;
+}
+async function connections() {
+  for (const run of jobs.runs) {
+    if (
+      run.mode !== "live" ||
+      !run.wallet_cipher ||
+      Date.now() - run.state.connection.at < 30000
+    )
+      continue;
+    try {
+      const v = await connectionState(run);
+      await command(run, {
+        action: "connection",
+        approved: v.approved,
+        balanceMicros: v.balanceMicros,
+        message: v.approved
+          ? "Wallet verified"
+          : "Spending approvals must be completed in Polymarket",
+      });
+    } catch {
+      await command(run, {
+        action: "connection",
+        approved: false,
+        balanceMicros: null,
+        message: "Wallet verification unavailable",
+      }).catch(() => {});
+    }
+  }
+}
+async function reconcile() {
+  for (const run of jobs.runs)
+    for (const p of [...run.state.positions])
+      try {
+        if (
+          p.status === "prepared" &&
+          Date.now() >= p.market.start * 1000 - 20000
+        ) {
+          await command(run, {
+            action: "unfilled",
+            positionId: p.id,
+            reason: "Submission window missed; no order was sent",
+          });
+          continue;
+        }
+        if (["submitting", "uncertain"].includes(p.status)) {
+          if (run.mode === "paper") {
+            await command(run, {
+              action: "unfilled",
+              positionId: p.id,
+              reason: "Paper attempt interrupted; no execution assumed",
+            });
+            continue;
+          }
+          const result = await confirmedFill(run, {
+            order_id: p.orderId,
+            condition_id: p.market.conditionId,
+            token_id:
+              p.direction === "Up" ? p.market.upToken : p.market.downToken,
+            start_seconds: p.market.start,
+            stake_cents: p.stakeCents,
+          });
+          if (result?.unfilled)
+            await command(run, {
+              action: "unfilled",
+              positionId: p.id,
+              reason: "Exchange confirmed no fill",
+            });
+          else if (result)
+            await command(run, { action: "fill", positionId: p.id, ...result });
+        } else if (p.status === "open" && Date.now() >= p.market.end * 1000) {
+          const m = await marketAt(p.market.start, p.market.horizon);
+          if (
+            m.conditionId === p.market.conditionId &&
+            m.upToken === p.market.upToken &&
+            m.downToken === p.market.downToken &&
+            m.winner
+          )
+            await command(run, {
+              action: "resolve",
+              positionId: p.id,
+              winner: m.winner,
+            });
+        }
+      } catch {
+        /* A failed reconciliation leaves this exact position unresolved. */
+      }
+}
+async function planEntries() {
+  for (const run of jobs.runs)
+    for (const horizon of run.state.config.horizons) {
+      const now = Date.now(),
+        target = nextStart(now, horizon),
+        remaining = target * 1000 - now,
+        key = `${run.id}:${horizon}:${target}`;
+      if (
+        !run.state.armed ||
+        run.member_status !== "active" ||
+        !jobs.entriesEnabled ||
+        !clockOK ||
+        attempted.has(key)
+      )
+        continue;
+      if (remaining > 30000 || remaining <= 22000 || plans.has(key)) continue;
+      const signal = analyze(candles.snapshot(), latest, horizon, now);
+      if (!signal.direction) continue;
+      try {
+        const m = await marketAt(target, horizon),
+          stake = nextStake(run.state.config, run.state.lossStreaks[horizon]);
+        if (
+          !m.accepting ||
+          !stake ||
+          run.state.positions.some((p) => p.market.horizon === horizon) ||
+          run.state.lastAttempt[horizon] >= target
+        )
+          continue;
+        const tokenId = signal.direction === "Up" ? m.upToken : m.downToken,
+          book = await orderBook(tokenId),
+          quote = quoteBuy(
+            book,
+            stake,
+            run.state.config,
+            m.feeRate,
+            m.feeExponent,
+            Date.now(),
+          );
+        if (!quote) continue;
+        let prepared = null;
+        if (run.mode === "live") {
+          if (
+            !geoAllowed ||
+            !process.env.TWAP_BOT_ENCRYPTION_KEY ||
+            !run.state.connection.approved
+          )
+            continue;
+          prepared = await prepareBuy(
+            run,
+            tokenId,
+            stake,
+            String(run.state.config.maxEntryCents / 100),
+          );
+        }
+        plans.set(key, {
+          m,
+          stake,
+          tokenId,
+          direction: signal.direction,
+          prepared,
+          version: run.state.configVersion,
+        });
+      } catch {
+        /* Missing liquidity or rules skip this opportunity. */
+      }
+    }
+}
+async function entries() {
+  for (const run of jobs.runs)
+    for (const horizon of run.state.config.horizons) {
+      const target = nextStart(Date.now(), horizon),
+        key = `${run.id}:${horizon}:${target}`,
+        plan = plans.get(key);
+      if (
+        !plan ||
+        attempted.has(key) ||
+        !entryWindow(Date.now(), target, horizon)
+      )
+        continue;
+      attempted.add(key);
+      let positionId = null,
+        providerAttempted = false;
+      try {
+        if (
+          !clockOK ||
+          !jobs.entriesEnabled ||
+          run.member_status !== "active" ||
+          run.state.configVersion !== plan.version
+        )
+          continue;
+        const stake = entryGate(run.state, plan.m, Date.now(), geoAllowed);
+        const signal = analyze(candles.snapshot(), latest, horizon, Date.now());
+        if (signal.direction !== plan.direction || stake !== plan.stake)
+          continue;
+        const book = await orderBook(plan.tokenId),
+          quote = quoteBuy(
+            book,
+            stake,
+            run.state.config,
+            plan.m.feeRate,
+            plan.m.feeExponent,
+            Date.now(),
+          );
+        if (!quote || !entryWindow(Date.now(), target, horizon)) continue;
+        const reserve = await command(
+          run,
+          {
+            action: "prepare",
+            market: plan.m,
+            direction: plan.direction,
+            stakeCents: stake,
+            orderId: plan.prepared?.orderId || null,
+          },
+          book,
+        );
+        positionId = reserve.id;
+        await command(run, { action: "submit", positionId });
+        if (run.mode === "paper") {
+          const { costMicros, sharesMicros, feeMicros } = quote;
+          await command(
+            run,
+            {
+              action: "fill",
+              positionId,
+              costMicros,
+              sharesMicros,
+              feeMicros,
+              fills: [],
+            },
+            book,
+          );
+        } else {
+          if (!entryWindow(Date.now(), target, horizon))
+            throw Error("Submission deadline missed");
+          providerAttempted = true;
+          const result = await submitBuy(plan.prepared, target * 1000 - 20000);
+          if (!result.ok)
+            await command(run, {
+              action: "unfilled",
+              positionId,
+              reason: "Exchange rejected the FOK order",
+            });
+          else if (
+            result.orderId?.toLowerCase() !==
+              plan.prepared.orderId.toLowerCase() ||
+            result.status !== "matched"
+          )
+            await command(run, {
+              action: "uncertain",
+              positionId,
+              reason: "Order outcome requires reconciliation; no retry",
+            });
+        }
+      } catch {
+        if (positionId)
+          await command(run, {
+            action: providerAttempted ? "uncertain" : "unfilled",
+            positionId,
+            reason: providerAttempted
+              ? "Uncertain exchange response; entries paused"
+              : "Entry window missed or state changed",
+          }).catch(() => {});
+      }
+    }
+  const cutoff = Date.now() - 7200000;
+  for (const [key, p] of plans)
+    if (p.m.start * 1000 < cutoff) {
+      plans.delete(key);
+      attempted.delete(key);
+    }
+}
+process.on("SIGINT", () => {
+  stopped = true;
+  void stream?.close();
+});
+process.on("SIGTERM", () => {
+  stopped = true;
+  void stream?.close();
+});
+try {
+  const initial = await bridge();
+  candles = new CandleBook(initial.feed?.candles || []);
+} catch {
+  /* Wait for registration/service readiness below. */
+}
+void streamPrices();
+console.log("Scalper engine started. Only member-armed runs can trade.");
+let maintenanceAt = 0;
+while (!stopped) {
+  const began = Date.now();
+  try {
+    await heartbeat();
+    await entries();
+    const closeToEntry = [300, 900, 3600].some(
+      (h) => nextStart(Date.now(), h) * 1000 - Date.now() < 35000,
+    );
+    if (!closeToEntry && Date.now() - maintenanceAt > 5000) {
+      await connections();
+      await reconcile();
+      maintenanceAt = Date.now();
+    }
+    await planEntries();
+  } catch {
+    console.error("Scalper cycle unavailable; no catch-up order will be sent");
+  }
+  await sleep(Math.max(50, 1000 - (Date.now() - began)));
+}

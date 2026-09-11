@@ -361,3 +361,21 @@ export const continuationOrders = sqliteTable("continuation_orders", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, t => [index("idx_continuation_orders_round").on(t.roundId)]);
+
+// Scalper has its own state, performance journal and feed. No account-ledger writes.
+export const scalperRuns = sqliteTable("scalper_runs", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => profiles.userId),
+  botId: text("bot_id").notNull().references(() => bots.id), mode: text("mode").notNull(),
+  revision: integer("revision").notNull().default(0), lastEvent: text("last_event").notNull(),
+  stateJson: text("state_json").notNull(), walletAddress: text("wallet_address"), walletCipher: text("wallet_cipher"),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, t => [uniqueIndex("idx_scalper_user_bot_mode").on(t.userId,t.botId,t.mode)]);
+export const scalperEvents = sqliteTable("scalper_events", {
+  id: text("id").primaryKey(), runId: text("run_id").notNull().references(() => scalperRuns.id),
+  revision: integer("revision").notNull(), kind: text("kind").notNull(), dataJson: text("data_json").notNull(),
+  createdAt: text("created_at").notNull(),
+}, t => [uniqueIndex("idx_scalper_event_revision").on(t.runId,t.revision)]);
+export const scalperFeed = sqliteTable("scalper_feed", {
+  id: text("id").primaryKey(), lease: text("lease").notNull(), leaseUntil: integer("lease_until").notNull(),
+  heartbeat: integer("heartbeat").notNull(), dataJson: text("data_json").notNull(),
+});

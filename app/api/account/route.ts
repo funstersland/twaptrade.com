@@ -109,9 +109,9 @@ export async function POST(request: Request) {
         .all(),
       db
         .prepare(
-          "SELECT id,name,pair,family,strategy_key,description,status,min_allocation_cents,created_at,updated_at FROM bots WHERE status='published' OR EXISTS (SELECT 1 FROM continuation_runs r WHERE r.bot_id=bots.id AND r.user_id=?) OR EXISTS (SELECT 1 FROM cheapshare_runs c WHERE c.bot_id=bots.id AND c.user_id=?) ORDER BY created_at DESC",
+          "SELECT id,name,pair,family,strategy_key,description,status,min_allocation_cents,created_at,updated_at FROM bots WHERE status='published' OR EXISTS (SELECT 1 FROM continuation_runs r WHERE r.bot_id=bots.id AND r.user_id=?) OR EXISTS (SELECT 1 FROM cheapshare_runs c WHERE c.bot_id=bots.id AND c.user_id=?) OR EXISTS (SELECT 1 FROM scalper_runs s WHERE s.bot_id=bots.id AND s.user_id=?) ORDER BY created_at DESC",
         )
-        .bind(user.id, user.id)
+        .bind(user.id, user.id, user.id)
         .all(),
       db
         .prepare(

@@ -6,3 +6,7 @@ TWAP_BOT_ENCRYPTION_KEY=
 TWAP_BOT_RUNNER_TOKEN=
 # Always-on Node runner calls the site over HTTPS (localhost allowed in development).
 TWAP_BOT_APP_ORIGIN=http://localhost:5173
+
+# Scalper is isolated from both existing engines. Start only after configuration.
+TWAP_SCALPER_RUNNER_TOKEN=
+TWAP_SCALPER_APP_ORIGIN=http://localhost:5173

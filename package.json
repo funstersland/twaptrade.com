@@ -17,7 +17,9 @@
     "db:migrate:postgres": "node scripts/migrate-postgres.mjs",
     "test:bot": "node --test scripts/bots/*.test.mjs",
     "bot:cheapshare": "node scripts/bots/cheapshare-runner.mjs",
-    "bot:register:cheapshare": "node scripts/register-cheapshare.mjs"
+    "bot:register:cheapshare": "node scripts/register-cheapshare.mjs",
+    "bot:scalper": "node scripts/bots/scalper-runner.mjs",
+    "bot:register:scalper": "node scripts/register-scalper.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
