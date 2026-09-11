@@ -1,15 +1,15 @@
 # Crypto Shares / Continuation Strategy / BTC5m
 
-Only this catalog bot uses `crypto-shares.continuation.btc5m`. Catalog registration resolves the exact family and name and never changes another bot. The $1,000 catalog minimum is a recommendation for this bot only; generic bots retain their strict allocation requirement.
+Only this catalog bot uses `crypto-shares.continuation.btc5m`. Its verified production catalog ID is `047f0cd1-f335-43f0-b775-cb478c82ea08`. Catalog registration resolves the exact family and name and never changes another bot. The $1,000 catalog minimum is a recommendation for this bot only; generic bots retain their strict allocation requirement.
 
 ## Approved strategy
 
 - Market: Polymarket BTC Up/Down, five-minute rounds.
-- At ten seconds before the current round ends, compare the current Chainlink BTC/USD 60-second TWAP observation with the observation at the current round's opening boundary.
+- At twenty seconds before the current round ends, compare the running Chainlink BTC/USD 60-second TWAP observation with the observation at the current round's opening boundary. Do not wait for the candle to close or for any round to resolve.
 - Green buys Up in the **next** round. Red buys Down in the **next** round. An unchanged price skips the entry.
-- No current-round purchases. A unique deployment/target-round record prevents repeat entries. A short submission window ends five seconds before the target starts; late work is skipped rather than trading the current round.
-- Do not enter while any prior position or order remains unresolved. This can skip consecutive rounds.
-- Lot means all-in dollars per round. A confirmed win resets to the configured base lot; a confirmed loss doubles the next lot. Unfilled, skipped, or uncertain orders do not count as losses.
+- No current-round purchases. A unique deployment/target-round record prevents repeat entries. Submission starts at T−20 and must finish before T−15; there is no late catch-up at the old T−10 timing.
+- Confirmed open positions do not block the next entry. Each open round continues to be marked, exited and reconciled independently. Pending or uncertain order executions still block new submissions until their quantities and cash effects are known.
+- Lot means all-in dollars per round. Only confirmed results affect the lot. Order confirmed rounds by their market start: a confirmed win resets to the configured base lot; subsequent confirmed losses double the next lot. A delayed older result cannot override a newer confirmed win. Open, unfilled, skipped, or uncertain rounds do not count as losses. Available cash must cover every new allocation; pending buys cannot spend the same cash twice.
 - The next lot must fit available funds. Doubling can exhaust the balance; binary share prices and fees mean a double does not guarantee recovery.
 - Exit when the executable bid stays at **99¢ or higher for five continuous seconds**, checked on the one-second cycle. A price dip, stale response, insufficient full-quantity depth, or observation gap over 1.5 seconds resets the timer.
 - Live exits sell the connected wallet’s **entire available balance of that exact outcome token**, including shares bought by other bots, as explicitly requested. Other rounds and the opposite outcome are not sold. A FOK sell has a 99¢ minimum; actual fills can improve on that price.
@@ -58,7 +58,7 @@ Sources:
 
 ## Runtime and operations
 
-On Railway, the `twaptrade.com` web service and `continuation-engine` run as separate services with one shared PostgreSQL database. Locally, run the site and `npm run bot:continuation` as separate processes. The engine requires Node 24+, an always-on host with an accurate clock, and HTTPS to the site outside localhost. The engine targets one tick per second, streams public RTDS prices, refreshes round/order/position state on the one-second cycle with overlap protection, and the visible tile polls once per second. Slow responses do not manufacture fresh data. A browser tab never submits orders or schedules trading. A minute-level scheduler cannot supply the T−10 timing required here.
+On Railway, the `twaptrade.com` web service and `continuation-engine` run as separate services with one shared PostgreSQL database. Locally, run the site and `npm run bot:continuation` as separate processes. The engine requires Node 24+, an always-on host with an accurate clock, and HTTPS to the site outside localhost. The engine targets one tick per second, streams public RTDS prices, refreshes round/order/position state on the one-second cycle with overlap protection, and the visible tile polls once per second. Slow responses do not manufacture fresh data. A browser tab never submits orders or schedules trading. A minute-level scheduler cannot supply the T−20 timing required here.
 
 The runner streams Polymarket's public RTDS `prices.crypto.chainlink.twap` feed, BTC/USD, 60-second lookback. It retains exact E18 price strings. It requires a boundary observation for the candle open and a price no more than three seconds old for entry. A missing boundary or feed gap skips the round. Polymarket's geographic restrictions are checked before live submission and are never bypassed.
 

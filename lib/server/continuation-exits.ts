@@ -2,6 +2,7 @@ import { z } from "zod";
 import { database } from "./db";
 import { HttpError, json } from "./http";
 import type { Round } from "../bots/crypto-shares/continuation/types";
+import { confirmedStreakStatement } from "./continuation";
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const fillSchema = z.object({
   id: z.string().regex(/^0x[0-9a-fA-F]{64}:\d+$/), orderId: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
@@ -70,11 +71,12 @@ export async function handleExit(input: Exit, round: Round & {mode:string}) {
   const gate = "EXISTS (SELECT 1 FROM continuation_orders WHERE id=? AND status IN ('prepared','uncertain'))";
   await db.batch([
     ...fills.map(f=>fillStatement(f,round.id,iso)),
-    db.prepare(`UPDATE continuation_runs SET paper_cash_micros=paper_cash_micros+CASE WHEN mode='paper' THEN ? ELSE 0 END,loss_streak=CASE WHEN ?=1 THEN CASE WHEN ?<0 THEN loss_streak+1 ELSE 0 END ELSE loss_streak END,updated_at=? WHERE id=? AND ${gate}`)
-      .bind(ownCash,closed?1:0,pnl,iso,round.run_id,input.orderId),
+    db.prepare(`UPDATE continuation_runs SET paper_cash_micros=paper_cash_micros+CASE WHEN mode='paper' THEN ? ELSE 0 END,updated_at=? WHERE id=? AND ${gate}`)
+      .bind(ownCash,iso,round.run_id,input.orderId),
     db.prepare(`UPDATE continuation_rounds SET sold_shares_micros=sold_shares_micros+?,sale_proceeds_micros=sale_proceeds_micros+?,sale_fee_micros=sale_fee_micros+?,status=?,pnl_micros=?,exit_stable_since=NULL,mark_micros=NULL,reason=?,updated_at=? WHERE id=? AND ${gate}`)
       .bind(ownShares,ownCash,ownFee,status,closed?pnl:null,closed?"Sold at target":"Partial sale; remaining shares are tracked.",iso,round.id,input.orderId),
     db.prepare("UPDATE continuation_orders SET status='confirmed',filled_shares_micros=?,gross_micros=?,fee_micros=?,cash_micros=?,updated_at=? WHERE id=? AND status IN ('prepared','uncertain')").bind(input.sharesMicros,input.grossMicros,input.feeMicros,input.cashMicros,iso,input.orderId),
+    confirmedStreakStatement(round.run_id),
   ]);
   return json({ok:true});
 }

@@ -1,0 +1,57 @@
+// Runs only against this disposable local database, without an exchange connection.
+import fs from "node:fs";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+import { roundStart } from "../../lib/bots/crypto-shares/continuation/rules.ts";
+const origin="http://127.0.0.1:5194", root=".sites-runtime/continuation-overlap-test-state/v3/d1/miniflare-D1DatabaseObject";
+const file=fs.readdirSync(root).find(f=>f.endsWith(".sqlite")&&f!=="metadata.sqlite");
+if(!file)throw Error("Isolated Continuation database is missing");
+const db=new DatabaseSync(`${root}/${file}`), cfg=JSON.parse(fs.readFileSync(".sites-runtime/continuation-overlap-wrangler.json"));
+const lease=randomUUID();let checks=0;
+async function api(path,payload,cookie,expected=200){const r=await fetch(origin+path,{method:payload?"POST":"GET",headers:{origin,"content-type":"application/json",...(cookie?{cookie}:{})},...(payload?{body:JSON.stringify(payload)}:{})});const d=await r.json();assert.equal(r.status,expected,JSON.stringify(d));checks++;return{d,cookie:r.headers.getSetCookie().map(x=>x.split(";")[0]).join("; ")};}
+async function runner(payload,expected=200){const r=await fetch(origin+"/api/continuation/runner",{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${cfg.vars.TWAP_BOT_RUNNER_TOKEN}`},body:JSON.stringify({lease,...payload})});const d=await r.json();if(expected!==null)assert.equal(r.status,expected,JSON.stringify(d));checks++;return{status:r.status,d};}
+const heartbeat=(value="1001")=>runner({action:"heartbeat",observedAt:Date.now(),priceE18:value,roundStart:roundStart(Date.now()),openE18:"1000",message:"Isolated verification"});
+db.exec("DELETE FROM auth_limits; DELETE FROM continuation_fills; DELETE FROM continuation_orders; DELETE FROM continuation_rounds; DELETE FROM continuation_runs; DELETE FROM continuation_feed;");
+const bot="047f0cd1-f335-43f0-b775-cb478c82ea08", other="isolated-other-bot", iso=new Date().toISOString();
+db.prepare("INSERT OR IGNORE INTO bots(id,name,pair,family,strategy_key,description,status,min_allocation_cents,created_by,created_at,updated_at) VALUES(?,'Continuation Strategy','BTC5m','Crypto Shares','crypto-shares.continuation.btc5m','Verification','published',100000,'verification',?,?)").run(bot,iso,iso);
+db.prepare("INSERT OR IGNORE INTO bots(id,name,pair,family,strategy_key,description,status,min_allocation_cents,created_by,created_at,updated_at) VALUES(?,'Other verification bot','BTC','Crypto Shares','test.other','Untouched','published',0,'verification',?,?)").run(other,iso,iso);
+const otherBefore=db.prepare("SELECT * FROM bots WHERE id=?").get(other);
+const email=`overlap-${randomUUID()}@example.test`, password="Verification#2026!";
+const user=await api("/api/auth",{action:"signup",name:"Continuation verification",email,password},null,201);
+const runId=(await api("/api/continuation",{action:"deploy",mode:"paper",lotCents:1000},user.cookie,201)).d.id;
+await heartbeat();await api("/api/continuation",{action:"play",runId},user.cookie);
+while((roundStart(Date.now())+300)*1000-Date.now()<30000)await sleep(500);
+const target=roundStart(Date.now())+300;
+function open(start){const id=randomUUID();db.prepare("INSERT INTO continuation_rounds(id,run_id,start_seconds,market_slug,condition_id,token_id,direction,stake_cents,status,cost_micros,shares_micros,created_at,updated_at) VALUES(?,?,?,?,'verification','123','Up',1000,'open',10000000,20000000,?,?)").run(id,runId,start,`btc-updown-5m-${start}`,iso,iso);db.prepare("UPDATE continuation_runs SET paper_cash_micros=paper_cash_micros-10000000 WHERE id=?").run(runId);return id;}
+const older=open(target-900), newer=open(target-600), current=open(target-300);
+const state=()=>db.prepare("SELECT * FROM continuation_runs WHERE id=?").get(runId);
+await heartbeat();await runner({action:"resolve",roundId:newer,winner:"Down"});assert.equal(state().loss_streak,1);
+const cashAfterLoss=state().paper_cash_micros;await runner({action:"resolve",roundId:newer,winner:"Down"});assert.equal(state().paper_cash_micros,cashAfterLoss);
+await runner({action:"resolve",roundId:older,winner:"Up"});assert.equal(state().loss_streak,1,"Older win cannot erase a newer confirmed loss");
+const orderId=`paper-${randomUUID()}`;await runner({action:"exit-prepare",roundId:current,orderId,sharesMicros:20000000,walletSharesMicros:20000000,stableSince:Date.now()-6000,observedAt:Date.now(),bidMicros:990000});
+await runner({action:"exit-fill",roundId:current,orderId,sharesMicros:20000000,grossMicros:19800000,feeMicros:0,cashMicros:19800000});assert.equal(state().loss_streak,0);
+const pending1=open(target-1200), pending2=open(target-1500), lateLoss=open(target-1800);
+await runner({action:"resolve",roundId:lateLoss,winner:"Down"});assert.equal(state().loss_streak,0,"Late older loss cannot override a newer confirmed win");
+const visible=(await api("/api/continuation?page=2",null,user.cookie)).d.runs[0];assert.equal(visible.activeRounds.length,2,"All open rounds are available independent of the history page");
+const shared=()=>db.prepare("SELECT (SELECT COUNT(*) FROM transactions) tx,(SELECT COUNT(*) FROM holdings) holdings,(SELECT COUNT(*) FROM deployments) deployments,(SELECT COUNT(*) FROM portfolio_snapshots) snapshots").get();const before=shared();
+console.log(`Paper fixtures ready. Waiting ${Math.ceil((target*1000-20000-Date.now())/1000)} seconds for the real T−20 window. Test login: ${email}`);
+while(Date.now()<target*1000-20000)await sleep(50);
+await heartbeat();
+const claim={action:"claim",runId,start:target,conditionId:"verification",tokenId:"456",direction:"Up"};
+for(const status of ["claiming","submitted","uncertain"]){db.prepare("UPDATE continuation_rounds SET status=? WHERE id=?").run(status,pending1);await runner(claim,409);}db.prepare("UPDATE continuation_rounds SET status='open' WHERE id=?").run(pending1);
+const exitId=randomUUID();db.prepare("INSERT INTO continuation_orders(id,round_id,side,status,requested_shares_micros,wallet_shares_micros,bot_shares_micros,limit_price,created_at,updated_at) VALUES(?,?,'SELL','prepared',20000000,20000000,20000000,'0.99',?,?)").run(exitId,pending1,iso,iso);await runner(claim,409);db.prepare("UPDATE continuation_orders SET status='uncertain' WHERE id=?").run(exitId);await runner(claim,409);db.prepare("UPDATE continuation_orders SET status='unfilled' WHERE id=?").run(exitId);
+const available=state().paper_cash_micros;db.prepare("UPDATE continuation_runs SET paper_cash_micros=1 WHERE id=?").run(runId);await runner(claim,409);db.prepare("UPDATE continuation_runs SET paper_cash_micros=? WHERE id=?").run(available,runId);
+await runner({...claim,direction:"Down"},409);await runner({...claim,start:target-300},409);
+await heartbeat("1000");await runner(claim,409);await heartbeat();
+const claims=await Promise.all([runner(claim,null),runner(claim,null)]);assert.deepEqual(claims.map(r=>r.status).sort(),[200,409],"A single next-round entry wins despite multiple open positions");
+const entry=claims.find(r=>r.status===200).d;assert.equal(entry.stakeCents,1000,"Open positions do not invent martingale losses");
+const cashBeforeFill=state().paper_cash_micros, fill={action:"fill",roundId:entry.roundId,costMicros:10000000,sharesMicros:20000000,feeMicros:0};await runner(fill);await runner(fill);assert.equal(state().paper_cash_micros,cashBeforeFill-10000000);
+await runner({action:"resolve",roundId:entry.roundId,winner:"Up"},409);
+const after=(await api("/api/continuation",null,user.cookie)).d.runs[0];assert.equal(after.activeRounds.length,3);assert.equal(after.nextLotCents,1000);
+assert.deepEqual(shared(),before);assert.deepEqual(db.prepare("SELECT * FROM bots WHERE id=?").get(other),otherBefore);
+while(Date.now()<target*1000-10000)await sleep(100);
+await heartbeat();const late=await runner(claim,409);assert.match(late.d.message,/Entry window closed/);
+console.log(`Continuation overlap HTTP verification: ${checks} requests passed; overlaps, pending-order guards, duplicate entry/fill, confirmed sizing, delayed outcomes, timing and ledger isolation verified.`);
+db.close();

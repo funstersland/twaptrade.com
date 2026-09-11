@@ -7,7 +7,9 @@ import {
   roundStart,
   paperFill,
   entryWindow,
+  pendingEntryOrder,
 } from "../../lib/bots/crypto-shares/continuation/rules.ts";
+import { CONTINUATION } from "../../lib/bots/crypto-shares/continuation/identity.ts";
 import {exitQuote, stableExit} from "./continuation-exit.mjs";
 import { marketAt, orderBook, markValue } from "./continuation-market.mjs";
 import {
@@ -120,7 +122,7 @@ async function heartbeat() {
       message: !fresh
         ? "Waiting for Chainlink prices"
         : opening?.start !== current
-          ? "Waiting for the next complete candle"
+          ? "Waiting for this round’s opening price"
           : "",
     });
     leaseReady = true;
@@ -279,8 +281,9 @@ async function enter(run, target) {
   let claim = null,
     submitted = false;
   try {
-    if (state.rounds.some((r) => r.run_id === run.id))
-      return await skip("Waiting for the open trade to settle.");
+    if (pendingEntryOrder(state.rounds, run.id) || state.orders.some(o =>
+      state.rounds.some(r => r.id === o.round_id && r.run_id === run.id)))
+      return await skip("Waiting for an order execution to confirm.");
     if (!latest || Date.now() - latest.at > 3000 || opening?.start !== current)
       return await skip("Fresh candle data unavailable.");
     const direction = candle(opening.value, latest.value);
@@ -341,12 +344,13 @@ async function enter(run, target) {
       await report({ action: "fill", roundId: claim.roundId, ...execution });
       return;
     }
-    if (Date.now() >= target * 1000 - 5000)
+    const deadline = target * 1000 - CONTINUATION.submissionCutoffSeconds * 1000;
+    if (Date.now() >= deadline)
       return await fail(claim.roundId, "Entry window missed.");
     // Persist the exact EIP-712 order ID before the one and only external POST.
     await report({action: "order", roundId: claim.roundId, orderId: prepared.orderId});
     submitted = true;
-    const result = await submitBuy(prepared, target * 1000 - 5000);
+    const result = await submitBuy(prepared, deadline);
     if (!result.ok)
       return await fail(
         claim.roundId,
@@ -412,7 +416,7 @@ while (!stopped) {
       state = await bridge();
       lastJobs = now;
     }
-    if (until <= 10000 && until > 5000 && state.entriesEnabled) {
+    if (entryWindow(Date.now(), target) && state.entriesEnabled) {
       await heartbeat();
       await Promise.allSettled(
         state.runs
@@ -420,7 +424,7 @@ while (!stopped) {
           .map((run) => enter(run, target)),
       );
     }
-    if (!connecting && until > 15000) {
+    if (!connecting && until > (CONTINUATION.leadSeconds + 5) * 1000) {
       connecting = true;
       void refreshConnections().catch(() => {}).finally(() => {connecting = false;});
     }

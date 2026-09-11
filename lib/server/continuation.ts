@@ -56,3 +56,14 @@ export async function requireRunner(request: Request) {
 }
 export const openRoundSql =
   "status IN ('claiming','submitted','open','uncertain')";
+export const pendingRoundSql = "status IN ('claiming','submitted','uncertain')";
+
+// With overlapping rounds, older settlements may arrive after newer results.
+// Size from confirmed rounds in market order, independently of receipt order.
+export function confirmedStreakStatement(runId: string) {
+  return database().prepare(`UPDATE continuation_runs SET loss_streak=(
+    SELECT COUNT(*) FROM continuation_rounds q WHERE q.run_id=continuation_runs.id AND q.status='lost'
+    AND q.start_seconds>COALESCE((SELECT MAX(w.start_seconds) FROM continuation_rounds w
+      WHERE w.run_id=continuation_runs.id AND w.status IN ('won','breakeven')),0)
+  ) WHERE id=?`).bind(runId);
+}

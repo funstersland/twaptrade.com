@@ -65,6 +65,7 @@ export type BotState = {
   runs: (Omit<Run, "wallet_cipher"> & {
     rounds: Round[];
     activeRound: Round | null;
+    activeRounds: Round[];
     roundCount: number;
     wins: number;
     losses: number;

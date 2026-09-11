@@ -81,7 +81,7 @@ export async function GET(request: Request) {
     const result = await Promise.all(
       runs.results.map(async (row) => {
         const { wallet_cipher, ...run } = row;
-        const [history, summary, activeRound, executions, riskMetrics] = await Promise.all([
+        const [history, summary, activeRounds, executions, riskMetrics] = await Promise.all([
           db
             .prepare(
               "SELECT * FROM continuation_rounds WHERE run_id=? ORDER BY start_seconds DESC LIMIT 20 OFFSET ?",
@@ -96,10 +96,10 @@ export async function GET(request: Request) {
             .first(),
           db
             .prepare(
-              `SELECT * FROM continuation_rounds WHERE run_id=? AND ${openRoundSql} ORDER BY start_seconds DESC LIMIT 1`,
+              `SELECT * FROM continuation_rounds WHERE run_id=? AND ${openRoundSql} ORDER BY start_seconds DESC`,
             )
             .bind(run.id)
-            .first<Round>(),
+            .all<Round>(),
           db.prepare("SELECT f.* FROM continuation_fills f JOIN continuation_rounds q ON q.id=f.round_id WHERE q.run_id=? AND q.id IN (SELECT id FROM continuation_rounds WHERE run_id=? ORDER BY start_seconds DESC LIMIT 20 OFFSET ?) ORDER BY f.block_number,f.log_index")
             .bind(run.id, run.id, (page - 1) * 20).all(),
           continuationRisk(db, run.id),
@@ -108,7 +108,8 @@ export async function GET(request: Request) {
           ...run,
           ...summary,
           riskMetrics,
-          activeRound,
+          activeRound: activeRounds.results[0] || null,
+          activeRounds: activeRounds.results,
           rounds: history.results,
           fills: executions.results,
           nextLotCents: nextLot(run.base_lot_cents, run.loss_streak),

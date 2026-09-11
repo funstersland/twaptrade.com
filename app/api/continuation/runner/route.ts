@@ -5,6 +5,8 @@ import {
   requireRunner,
   continuationBot,
   openRoundSql,
+  pendingRoundSql,
+  confirmedStreakStatement,
 } from "@/lib/server/continuation";
 import { json, failure, HttpError } from "@/lib/server/http";
 import { CONTINUATION } from "@/lib/bots/crypto-shares/continuation/identity";
@@ -140,6 +142,8 @@ export async function GET(request: Request) {
         config.deploymentsOpen &&
         !config.maintenanceMode,
       now: Date.now(),
+      entryLeadSeconds: CONTINUATION.leadSeconds,
+      waitsForResolution: false,
     });
   } catch (e) {
     return failure(e);
@@ -289,7 +293,7 @@ export async function POST(request: Request) {
       const rowId = crypto.randomUUID();
       const result = await db
         .prepare(
-          `INSERT OR IGNORE INTO continuation_rounds (id,run_id,start_seconds,market_slug,condition_id,token_id,direction,stake_cents,status,reference_price,signal_price,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,'claiming',?,?,?,? WHERE EXISTS (SELECT 1 FROM continuation_runs r JOIN profiles p ON p.user_id=r.user_id WHERE r.id=? AND r.status='running' AND p.status='active') AND NOT EXISTS (SELECT 1 FROM continuation_rounds WHERE run_id=? AND ${openRoundSql})`,
+          `INSERT OR IGNORE INTO continuation_rounds (id,run_id,start_seconds,market_slug,condition_id,token_id,direction,stake_cents,status,reference_price,signal_price,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,'claiming',?,?,?,? WHERE EXISTS (SELECT 1 FROM continuation_runs r JOIN profiles p ON p.user_id=r.user_id WHERE r.id=? AND r.status='running' AND p.status='active' AND r.base_lot_cents=? AND r.loss_streak=? AND (CASE WHEN r.mode='paper' THEN r.paper_cash_micros ELSE r.wallet_balance_micros END)>=?) AND NOT EXISTS (SELECT 1 FROM continuation_rounds WHERE run_id=? AND ${pendingRoundSql}) AND NOT EXISTS (SELECT 1 FROM continuation_orders o JOIN continuation_rounds q ON q.id=o.round_id WHERE q.run_id=? AND o.status IN ('prepared','uncertain'))`,
         )
         .bind(
           rowId,
@@ -305,13 +309,17 @@ export async function POST(request: Request) {
           iso,
           iso,
           run!.id,
+          run!.base_lot_cents,
+          run!.loss_streak,
+          lot * 10000,
+          run!.id,
           run!.id,
         )
         .run();
       if (!result.meta.changes)
         throw new HttpError(
           409,
-          "An entry already exists, a position is unsettled, or the bot is paused.",
+          "An entry already exists, an order is pending, or the bot state changed.",
         );
       return json({ ok: true, roundId: rowId, stakeCents: lot });
     }
@@ -398,9 +406,9 @@ export async function POST(request: Request) {
       await db.batch([
         db
           .prepare(
-            "UPDATE continuation_runs SET loss_streak=CASE WHEN ?=1 THEN 0 ELSE loss_streak+1 END,paper_cash_micros=paper_cash_micros+CASE WHEN mode='paper' THEN ? ELSE 0 END,updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM continuation_rounds WHERE id=? AND status='open')",
+            "UPDATE continuation_runs SET paper_cash_micros=paper_cash_micros+CASE WHEN mode='paper' THEN ? ELSE 0 END,updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM continuation_rounds WHERE id=? AND status='open')",
           )
-          .bind(won ? 1 : 0, payout, iso, round.run_id, round.id),
+          .bind(payout, iso, round.run_id, round.id),
         db
           .prepare(
             "UPDATE continuation_rounds SET status=?,winner=?,payout_micros=?,pnl_micros=?,mark_micros=?,updated_at=? WHERE id=? AND status='open'",
@@ -414,6 +422,7 @@ export async function POST(request: Request) {
             iso,
             round.id,
           ),
+        confirmedStreakStatement(round.run_id),
       ]);
       return json({ ok: true });
     }

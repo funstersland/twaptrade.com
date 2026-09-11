@@ -3,3 +3,4 @@
 await import("./prepare-cheapshare-database.mjs");
 if (process.exitCode) process.exit(process.exitCode);
 await import("./register-scalper.mjs");
+await import("./update-continuation.mjs");

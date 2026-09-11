@@ -8,9 +8,12 @@ export function candle(openE18: string, latestE18: string): Direction | null {
 export function entryWindow(now: number, targetStart: number) {
   return (
     targetStart === roundStart(now) + 300 &&
-    now >= targetStart * 1000 - 10_000 &&
-    now < targetStart * 1000 - 5_000
+    now >= targetStart * 1000 - CONTINUATION.leadSeconds * 1000 &&
+    now < targetStart * 1000 - CONTINUATION.submissionCutoffSeconds * 1000
   );
+}
+export function pendingEntryOrder(rounds: { run_id: string; status: string }[], runId: string) {
+  return rounds.some(r => r.run_id === runId && ["claiming", "submitted", "uncertain"].includes(r.status));
 }
 export function nextLot(baseCents: number, consecutiveLosses: number) {
   const value = baseCents * 2 ** consecutiveLosses;
@@ -49,3 +52,4 @@ export function paperFill(
     averagePrice: notional / sharesFilled,
   };
 }
+import { CONTINUATION } from "./identity.ts";

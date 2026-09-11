@@ -5,5 +5,6 @@ export const CONTINUATION = {
   pair: "BTC5m",
   recommendedCents: 100_000,
   roundSeconds: 300,
-  leadSeconds: 10,
+  leadSeconds: 20,
+  submissionCutoffSeconds: 15,
 } as const;

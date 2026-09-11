@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, Status, money, requestJSON } from "./workspace-components";
 import { BotRiskMetrics } from "./bot-risk-metrics";
+import { CONTINUATION } from "@/lib/bots/crypto-shares/continuation/identity";
 import type {
   BotState,
   Run,
@@ -183,7 +184,7 @@ export function ContinuationBot() {
         </div>
       )}
       {cards.map((run) => {
-        const open = run?.activeRound;
+        const openRounds = run?.activeRounds || (run?.activeRound ? [run.activeRound] : []);
         return (
           <section
             className="panel continuation-card"
@@ -309,18 +310,15 @@ export function ContinuationBot() {
                 </span>
               </div>
             </div>
-            {open ? (
-              <Position round={open} now={now} />
-            ) : (
+            {openRounds.map(round => <Position key={round.id} round={round} now={now} />)}
               <div className="continuation-position-empty">
-                <span className="small muted">No open position</span>
+                <span className="small muted">{openRounds.length ? `${openRounds.length} open rounds tracked` : "No open position"}</span>
                 <span className="small">
                   Next eligible entry at{" "}
-                  {new Date((end - 10) * 1000).toLocaleTimeString()} · upcoming
+                  {new Date((end - CONTINUATION.leadSeconds) * 1000).toLocaleTimeString()} · upcoming
                   round only
                 </span>
               </div>
-            )}
             <div className="continuation-bottom">
               <span className="small muted">
                 {run?.mode === "paper"
@@ -454,8 +452,9 @@ export function ContinuationBot() {
           <DialogHeader>
             <DialogTitle>Continuation Strategy · BTC5m</DialogTitle>
             <DialogDescription>
-              Follow the candle at T−10. Wait for settlement, double after a
-              loss, reset after a win.
+              Follow the running candle at T−20 and buy the next round.
+              Open positions do not delay entry. Size doubles after confirmed
+              losses and resets after a confirmed win.
             </DialogDescription>
           </DialogHeader>
           <form className="settings-form" onSubmit={save}>
