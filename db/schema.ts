@@ -6,6 +6,42 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
+
+// CheapShare owns its state and append-only execution journal. No account ledger writes.
+export const cheapshareRuns = sqliteTable("cheapshare_runs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => profiles.userId),
+  botId: text("bot_id").notNull().references(() => bots.id),
+  mode: text("mode").notNull(),
+  revision: integer("revision").notNull().default(0),
+  lastEvent: text("last_event").notNull(),
+  stateJson: text("state_json").notNull(),
+  walletAddress: text("wallet_address"),
+  walletCipher: text("wallet_cipher"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, t => [uniqueIndex("idx_cheapshare_user_bot_mode").on(t.userId,t.botId,t.mode)]);
+export const cheapshareEvents = sqliteTable("cheapshare_events", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => cheapshareRuns.id),
+  revision: integer("revision").notNull(),
+  kind: text("kind").notNull(),
+  dataJson: text("data_json").notNull(),
+  createdAt: text("created_at").notNull(),
+}, t => [uniqueIndex("idx_cheapshare_event_revision").on(t.runId,t.revision),index("idx_cheapshare_event_kind").on(t.runId,t.kind,t.createdAt)]);
+export const cheapshareMarkets = sqliteTable("cheapshare_markets", {
+  slug: text("slug").primaryKey(),
+  strike: text("strike").notNull(),
+  source: text("source").notNull(),
+  lockedAt: integer("locked_at").notNull(),
+});
+export const cheapshareFeed = sqliteTable("cheapshare_feed", {
+  id: text("id").primaryKey(),
+  lease: text("lease").notNull(),
+  leaseUntil: integer("lease_until").notNull(),
+  heartbeat: integer("heartbeat").notNull(),
+  dataJson: text("data_json").notNull(),
+});
 export const profiles = sqliteTable(
   "profiles",
   {

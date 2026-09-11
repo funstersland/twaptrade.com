@@ -64,6 +64,13 @@
       "when": 1789076263300,
       "tag": "0008_friendly_revanche",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789090783776,
+      "tag": "0009_red_risque",
+      "breakpoints": true
     }
   ]
 }

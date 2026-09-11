@@ -15,7 +15,9 @@
     "bot:continuation": "node scripts/bots/continuation-runner.mjs",
     "build:railway": "next build --webpack",
     "db:migrate:postgres": "node scripts/migrate-postgres.mjs",
-    "test:bot": "node --test scripts/bots/*.test.mjs"
+    "test:bot": "node --test scripts/bots/*.test.mjs",
+    "bot:cheapshare": "node scripts/bots/cheapshare-runner.mjs",
+    "bot:register:cheapshare": "node scripts/register-cheapshare.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
