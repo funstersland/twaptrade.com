@@ -13,7 +13,7 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "bot:continuation": "node scripts/bots/continuation-runner.mjs",
-    "build:railway": "next build --webpack",
+    "build:railway": "next build --webpack && node scripts/verify-public-home.mjs",
     "db:migrate:postgres": "node scripts/migrate-postgres.mjs",
     "test:bot": "node --test scripts/bots/*.test.mjs",
     "bot:cheapshare": "node scripts/bots/cheapshare-runner.mjs",
