@@ -48,21 +48,17 @@ const current = api(
   "query($service:String!,$environment:String!){serviceInstance(serviceId:$service,environmentId:$environment){preDeployCommand}}",
   { service: web, environment: environmentId },
 ).serviceInstance;
-const commands = [...(current.preDeployCommand || [])];
-const migrated = commands.some((c) =>
-  /scripts\/(migrate-postgres|prepare-cheapshare-database|prepare-scalper-database)\.mjs/.test(
-    c,
-  ),
-);
-const registration = migrated
-  ? "node scripts/register-scalper.mjs"
-  : "node scripts/prepare-scalper-database.mjs";
-if (
-  !commands.some((c) =>
-    /scripts\/(register-scalper|prepare-scalper-database)\.mjs/.test(c),
-  )
-)
-  commands.push(registration);
+const currentCommand = (current.preDeployCommand || []).join(" && ");
+const supportedCommands = new Set([
+  "node scripts/prepare-cheapshare-database.mjs",
+  "node scripts/prepare-cheapshare-database.mjs && node scripts/register-scalper.mjs",
+  "node scripts/prepare-production-database.mjs",
+]);
+if (!supportedCommands.has(currentCommand))
+  throw Error(
+    "Existing release steps changed; preserve them before configuring Scalper",
+  );
+const commands = ["node scripts/prepare-production-database.mjs"];
 const matches = state.services.edges.filter(
   (e) => e.node.name === "scalper-engine",
 );
@@ -102,7 +98,7 @@ const configure =
 api(configure, {
   service: web,
   environment: environmentId,
-  input: { preDeployCommand: commands.length ? [commands.join(" && ")] : [] },
+  input: { preDeployCommand: commands },
 });
 api(configure, {
   service: worker,
