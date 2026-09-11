@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { DataTable, money, requestJSON } from "./workspace-components";
+import { BotRiskMetrics } from "./bot-risk-metrics";
+import type { BotRiskMetrics as RiskMetrics } from "@/lib/bot-performance";
 import {
   DEFAULT_CONFIG,
   type Config,
@@ -46,6 +48,7 @@ type Run = {
   walletAddress: string | null;
   hasWallet: boolean;
   state: State;
+  riskMetrics: RiskMetrics | null;
   history: {
     id: string;
     kind: string;
@@ -251,6 +254,9 @@ export function CheapshareBot() {
       {data?.feed?.message && (
         <p className="small muted">{data.feed.message}</p>
       )}
+      {!data?.runs.length && (
+        <BotRiskMetrics emptyLabel={data ? "No closed trades yet" : "Performance data unavailable"} />
+      )}
       {data?.runs.map((run) => {
         const s = run.state,
           rows = s.scan as Row[];
@@ -323,6 +329,10 @@ export function CheapshareBot() {
                 </strong>
               </div>
             </div>
+            <BotRiskMetrics
+              metrics={run.riskMetrics}
+              emptyLabel={s.trades > 0 ? "Performance data unavailable" : "No closed trades yet"}
+            />
             <p className="small muted">
               {s.message}{" "}
               {run.mode === "paper"

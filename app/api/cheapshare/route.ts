@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { database, settings, auditStatement } from "@/lib/server/db";
 import { requireUser } from "@/lib/server/auth";
+import { cheapshareRisk } from "@/lib/bots/crypto-shares/cheapshare/performance";
 import { body, json, failure, HttpError } from "@/lib/server/http";
 import {
   cheapshareBot,
@@ -84,6 +85,7 @@ export async function GET(req: Request) {
         walletAddress: r.wallet_address,
         hasWallet: !!r.wallet_cipher,
         state: JSON.parse(r.state_json) as State,
+        riskMetrics: await cheapshareRisk(db, r.id, r.revision),
         history: (
           await db
             .prepare(

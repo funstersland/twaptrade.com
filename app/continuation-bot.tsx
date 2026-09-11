@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, Status, money, requestJSON } from "./workspace-components";
+import { BotRiskMetrics } from "./bot-risk-metrics";
 import type {
   BotState,
   Run,
@@ -268,6 +269,10 @@ export function ContinuationBot() {
                 </div>
               ))}
             </div>
+            <BotRiskMetrics
+              metrics={run?.riskMetrics}
+              emptyLabel={!state || (run && run.wins + run.losses > 0) ? "Performance data unavailable" : "No closed trades yet"}
+            />
             <div className="continuation-round">
               <div className="round-clock">
                 <span className="eyebrow">CURRENT ROUND</span>

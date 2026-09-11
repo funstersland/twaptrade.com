@@ -4,6 +4,7 @@ import Link from "next/link";
 import { CheapshareBot } from "./cheapshare-bot";
 import { CHEAPSHARE } from "@/lib/bots/crypto-shares/cheapshare/identity";
 import { ContinuationBot } from "./continuation-bot";
+import { BotRiskMetrics } from "./bot-risk-metrics";
 import { CONTINUATION } from "@/lib/bots/crypto-shares/continuation/identity";
 import { defaultPreferences, validPreferences } from "@/lib/appearance";
 import { botFamilies } from "@/lib/bot-families";
@@ -511,6 +512,7 @@ export function Workspace({
                               </span>
                             )}
                             <p>{b.description || "No description provided."}</p>
+                            <BotRiskMetrics emptyLabel="Performance data unavailable" />
                             <div className="row-between small">
                               <span className="muted">Minimum allocation</span>
                               <strong>{money(b.min_allocation_cents)}</strong>

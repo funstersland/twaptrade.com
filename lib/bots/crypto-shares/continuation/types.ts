@@ -1,3 +1,5 @@
+import type { BotRiskMetrics } from "../../../bot-performance";
+
 export type Run = {
   id: string;
   user_id: string;
@@ -67,6 +69,7 @@ export type BotState = {
     wins: number;
     losses: number;
     pnlMicros: number;
+    riskMetrics: BotRiskMetrics | null;
     nextLotCents: number | null;
     fills: {
       id: string; round_id: string; order_id: string; side: string; transaction_hash: string;
