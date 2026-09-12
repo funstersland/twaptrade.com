@@ -10,6 +10,7 @@ import {
 } from "@/lib/server/continuation";
 import { json, failure, HttpError } from "@/lib/server/http";
 import { CONTINUATION } from "@/lib/bots/crypto-shares/continuation/identity";
+import { continuationAccounting } from "@/lib/bots/crypto-shares/continuation/performance";
 import {
   candle,
   entryWindow,
@@ -127,6 +128,12 @@ export async function GET(request: Request) {
       )
       .bind(bot.id)
       .all<Run>();
+    const auditRun = new URL(request.url).searchParams.get("accounting");
+    if (auditRun) {
+      const run = runs.results.find((r) => r.id === auditRun);
+      if (!run) throw new HttpError(404, "Deployment not found.");
+      return json({ botId: bot.id, runId: run.id, mode: run.mode, accounting: await continuationAccounting(db, run.id) });
+    }
     const rounds = await db
       .prepare(
         `SELECT q.* FROM continuation_rounds q JOIN continuation_runs r ON r.id=q.run_id WHERE r.bot_id=? AND q.${openRoundSql} ORDER BY q.start_seconds`,

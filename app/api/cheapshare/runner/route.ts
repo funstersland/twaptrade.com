@@ -64,6 +64,13 @@ export async function GET(req: Request) {
         .bind(Date.now() - 86400000)
         .all(),
     ]);
+    const diagnosticsRun = new URL(req.url).searchParams.get("diagnostics");
+    if (diagnosticsRun) {
+      const run = runs.results.find(r => r.id === diagnosticsRun);
+      if (!run) throw new HttpError(404, "Run not found.");
+      const s = JSON.parse(run.state_json);
+      return json({ botId: b.id, runId: run.id, mode: run.mode, scan: s.scan, feed: await feed() });
+    }
     return json({
       runs: runs.results.map((r) => ({
         ...r,

@@ -1,4 +1,5 @@
 import type { BotRiskMetrics } from "../../../bot-performance";
+import type { ContinuationAccounting } from "./performance";
 
 export type Run = {
   id: string;
@@ -70,6 +71,7 @@ export type BotState = {
     wins: number;
     losses: number;
     pnlMicros: number;
+    accounting?: ContinuationAccounting | null;
     riskMetrics: BotRiskMetrics | null;
     nextLotCents: number | null;
     fills: {

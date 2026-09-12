@@ -162,6 +162,14 @@ await api(
 );
 await api("/api/scalper", { action: "disarm", runId: paper }, a.cookie);
 await heartbeat();
+const checkAt = Date.now();
+await runner({ action: "heartbeat", geoAllowed: false, latest: null, candles: [], message: "Diagnostic isolation check", checks: [
+  { runId: paper, horizon: 300, target: Math.floor(checkAt/1000)+300, at: checkAt, reason: "Own diagnostic" },
+  { runId: randomUUID(), horizon: 300, target: Math.floor(checkAt/1000)+300, at: checkAt, reason: "Other member diagnostic" },
+] });
+assert.deepEqual((await api("/api/scalper", null, a.cookie)).d.feed.checks.map(c => c.reason), ["Own diagnostic"]);
+assert.deepEqual((await api("/api/scalper", null, b.cookie)).d.feed.checks, []);
+checks += 2;
 run = (await api("/api/scalper", null, a.cookie)).d.runs[0];
 await runner(
   {

@@ -9,7 +9,7 @@ import {
 } from "@/lib/server/continuation";
 import { CONTINUATION } from "@/lib/bots/crypto-shares/continuation/identity";
 import { nextLot } from "@/lib/bots/crypto-shares/continuation/rules";
-import { continuationRisk } from "@/lib/bots/crypto-shares/continuation/performance";
+import { continuationRisk, continuationAccounting } from "@/lib/bots/crypto-shares/continuation/performance";
 import type {
   Run,
   Round,
@@ -81,7 +81,7 @@ export async function GET(request: Request) {
     const result = await Promise.all(
       runs.results.map(async (row) => {
         const { wallet_cipher, ...run } = row;
-        const [history, summary, activeRounds, executions, riskMetrics] = await Promise.all([
+        const [history, summary, activeRounds, executions, riskMetrics, accounting] = await Promise.all([
           db
             .prepare(
               "SELECT * FROM continuation_rounds WHERE run_id=? ORDER BY start_seconds DESC LIMIT 20 OFFSET ?",
@@ -103,11 +103,13 @@ export async function GET(request: Request) {
           db.prepare("SELECT f.* FROM continuation_fills f JOIN continuation_rounds q ON q.id=f.round_id WHERE q.run_id=? AND q.id IN (SELECT id FROM continuation_rounds WHERE run_id=? ORDER BY start_seconds DESC LIMIT 20 OFFSET ?) ORDER BY f.block_number,f.log_index")
             .bind(run.id, run.id, (page - 1) * 20).all(),
           continuationRisk(db, run.id),
+          continuationAccounting(db, run.id),
         ]);
         return {
           ...run,
           ...summary,
           riskMetrics,
+          accounting,
           activeRound: activeRounds.results[0] || null,
           activeRounds: activeRounds.results,
           rounds: history.results,

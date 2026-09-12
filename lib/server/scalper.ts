@@ -24,6 +24,7 @@ export type Feed = {
   latest: Tick | null;
   candles: Candle[];
   message: string;
+  checks?: { runId: string; horizon: 300 | 900 | 3600; target: number; at: number; reason: string }[];
 };
 export async function scalperBot() {
   const rows = await database()

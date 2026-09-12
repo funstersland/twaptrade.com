@@ -90,28 +90,30 @@ export function analyze(
     .sort((a, b) => a.start - b.start);
   const rejection = signals.at(-1),
     previous = signals.at(-2);
-  if (
-    !rejection ||
-    !previous ||
-    !rejection.complete ||
-    !previous.complete ||
-    previous.end !== rejection.start ||
-    now - rejection.end > frame.signal * 1000 + 3000
-  )
-    return result;
+  if (!rejection || !previous)
+    return { ...result, reason: `Waiting for two closed ${frame.signal}s rejection candles` };
+  if (!rejection.complete || !previous.complete || previous.end !== rejection.start)
+    return { ...result, reason: `Feed gap in the latest ${frame.signal}s candles; waiting for two complete candles` };
+  if (now - rejection.end > frame.signal * 1000 + 3000)
+    return { ...result, reason: `Latest closed ${frame.signal}s candle is stale` };
   // Levels must be confirmable before the rejection begins, never retroactively.
-  const context = candles
+  const history = candles
     .filter((c) => c.seconds === frame.context && c.end <= rejection.start)
     .sort((a, b) => a.start - b.start)
     .slice(-60);
-  if (
-    context.length < 40 ||
-    context.some(
-      (c, i) => !c.complete || (i > 0 && context[i - 1].end !== c.start),
-    ) ||
-    rejection.start - context.at(-1)!.end >= frame.context * 1000
-  )
-    return result;
+  // Use the most recent valid consecutive suffix. An older invalid candle must
+  // not block a fully recovered 40-candle context or be bridged as valid history.
+  let first = history.length;
+  while (first > 0) {
+    const c = history[first - 1];
+    if (!c.complete || (first < history.length && c.end !== history[first].start)) break;
+    first--;
+  }
+  const context = history.slice(first);
+  if (context.length < 40)
+    return { ...result, reason: `Warming up: ${context.length}/40 consecutive ${frame.context / 60}m candles${first > 0 ? " since the last feed gap" : ""}` };
+  if (rejection.start - context.at(-1)!.end >= frame.context * 1000)
+    return { ...result, reason: "Structural candle history is stale" };
   const ranges = context
     .slice(-21)
     .slice(1)
@@ -288,4 +290,24 @@ export function quoteBuy(
     maxPrice: String(maxPrice),
     breakEven: cents / 100 / shares,
   };
+}
+
+// Explain a skipped allocation without raising it or weakening execution gates.
+export function quoteBuyCheck(book: Book, cents: number, config: Config, feeRate: number, exponent: number, now: number) {
+  const quote = quoteBuy(book, cents, config, feeRate, exponent, now);
+  if (quote) return { quote, reason: "Executable quote ready" };
+  if (book.at > now + 500 || now - book.at > 2000)
+    return { quote: null, reason: "Outcome order book is stale" };
+  const ask = Math.min(...book.asks.filter(a => Number(a.size) > 0).map(a => Number(a.price)));
+  const bid = Math.max(...book.bids.filter(b => Number(b.size) > 0).map(b => Number(b.price)));
+  if (!(ask > 0 && ask < 1 && bid > 0 && bid <= ask))
+    return { quote: null, reason: "Missing or crossed outcome quotes" };
+  if (ask > config.maxEntryCents / 100)
+    return { quote: null, reason: `Ask ${(ask * 100).toFixed(1)}¢ exceeds ${config.maxEntryCents}¢ entry limit` };
+  if (ask - bid > config.maxSpreadCents / 100 + 1e-9)
+    return { quote: null, reason: `Spread ${((ask - bid) * 100).toFixed(1)}¢ exceeds ${config.maxSpreadCents}¢ limit` };
+  const perShare = ask + feeRate * (ask * (1 - ask)) ** exponent;
+  if (cents / 100 / perShare < book.minShares)
+    return { quote: null, reason: `$${(cents / 100).toFixed(2)} lot cannot buy the venue minimum of ${book.minShares} shares at this ask` };
+  return { quote: null, reason: "Insufficient depth, minimum shares or unsupported fee schedule" };
 }

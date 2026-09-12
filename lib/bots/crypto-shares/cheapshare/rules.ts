@@ -96,6 +96,18 @@ export function scan(i: ScanInput) {
     windowSeconds: i.windowSeconds,
     secondsLeft: Math.max(0, (i.end - i.now) / 1000),
     gates, reason: gates.find(g => !g.ok)?.name || "Entry eligible",
+    diagnostics: {
+      at: i.now,
+      roundStart: i.start,
+      watchingSince: i.watchingSince,
+      agesMs: {
+        twap: i.twap.at(-1) ? i.now - i.twap.at(-1)!.at : null,
+        oracle: i.oracle.at(-1) ? i.now - i.oracle.at(-1)!.at : null,
+        spot: i.spot.at(-1) ? i.now - i.spot.at(-1)!.at : null,
+        upBook: i.now - i.up.at,
+        downBook: i.now - i.down.at,
+      },
+    },
   });
   gate("Pair/window enabled", i.preset.enabled);
   gate("News block off", !i.config.newsBlocked);

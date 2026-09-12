@@ -70,6 +70,7 @@ const schema = z.discriminatedUnion("action", [
       latest: z.object({ at: integer, value: price }).nullable(),
       candles: z.array(candle).max(640),
       message: z.string().max(300),
+      checks: z.array(z.object({ runId: z.string().uuid(), horizon: z.union([z.literal(300), z.literal(900), z.literal(3600)]), target: integer, at: integer, reason: z.string().max(300) }).strict()).max(300).optional(),
     })
     .strict(),
   z
@@ -150,6 +151,7 @@ export async function POST(req: Request) {
             candles: c.candles,
             geoAllowed: c.geoAllowed,
             message: c.message,
+            checks: c.checks || [],
           }),
           SCALPER.key,
           c.lease,

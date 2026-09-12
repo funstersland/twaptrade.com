@@ -551,11 +551,14 @@ async function tick() {
           );
         }
       }
+      const blockers = new Map();
+      for (const row of rows) if (!row.eligible) blockers.set(row.reason, (blockers.get(row.reason) || 0) + 1);
+      const common = [...blockers].sort((a, b) => b[1] - a[1])[0];
       await command(run, {
         action: "scan",
         rows,
         message: run.state.armed
-          ? "Watching for a confirmed spot reversal."
+          ? rows.some(r => r.eligible) ? "Reversal passed the entry checks." : common ? `No entry. Most common blocker (${common[1]}/${rows.length} markets): ${common[0]}` : "Waiting for market checks."
           : "ARM is off. No new buy or sell orders.",
       });
     } catch (e) {

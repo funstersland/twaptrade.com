@@ -274,6 +274,18 @@ export function ContinuationBot() {
               metrics={run?.riskMetrics}
               emptyLabel={!state || (run && run.wins + run.losses > 0) ? "Performance data unavailable" : "No closed trades yet"}
             />
+            {run?.accounting && (
+              <details className="cs-details">
+                <summary>P&amp;L breakdown</summary>
+                <p className="small">
+                  Profitable trades {dollars(run.accounting.profitMicros)} − losing trades {dollars(run.accounting.lossMicros)} = {dollars(run.accounting.netMicros)}.
+                </p>
+                <p className="small muted">
+                  Average profit {run.accounting.profitableTrades ? dollars(run.accounting.profitMicros / run.accounting.profitableTrades) : "—"} · Average loss {run.accounting.losingTrades ? dollars(run.accounting.lossMicros / run.accounting.losingTrades) : "—"} · Largest loss {dollars(run.accounting.largestLossMicros)}.
+                  {" "}Closed-trade fees of {dollars(run.accounting.feeMicros)} are already included. Wins and losses count trades; their dollar sizes differ. Doubling does not guarantee recovery.
+                </p>
+              </details>
+            )}
             <div className="continuation-round">
               <div className="round-clock">
                 <span className="eyebrow">CURRENT ROUND</span>

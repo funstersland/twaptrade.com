@@ -45,6 +45,7 @@ type Row = {
   secondsLeft?: number;
   gates?: { name: string; ok: boolean }[];
   marks?: { id: string; value: number | null }[];
+  diagnostics?: { at: number; roundStart: number; watchingSince: number | null; agesMs: Record<string, number | null> };
 };
 type Run = {
   id: string;
@@ -425,6 +426,13 @@ export function CheapshareBot() {
                             {g.name}
                           </p>
                         ))}
+                        {row?.diagnostics && (
+                          <p className="small muted">
+                            Check at {new Date(row.diagnostics.at).toLocaleTimeString()}. Round opened {new Date(row.diagnostics.roundStart).toLocaleTimeString()}; continuous feeds since {row.diagnostics.watchingSince === null ? "unavailable" : new Date(row.diagnostics.watchingSince).toLocaleTimeString()}.
+                            <br />
+                            Data age: {Object.entries(row.diagnostics.agesMs).map(([source, age]) => `${({ twap: "TWAP", oracle: "Chainlink spot", spot: "Exchange spot", upBook: "Up book", downBook: "Down book" } as Record<string, string>)[source] || source} ${age === null ? "missing" : `${(age / 1000).toFixed(1)}s`}`).join(" · ")}. Limits: TWAP/Chainlink 2.5s, spot 1.5s, books 3s.
+                          </p>
+                        )}
                       </details>
                     );
                   }),

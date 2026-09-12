@@ -58,6 +58,7 @@ type Response = {
     candles: Candle[];
     latest: { at: number; value: string } | null;
     message: string;
+    checks?: { runId: string; horizon: Horizon; target: number; at: number; reason: string }[];
   } | null;
   signals: (Signal & { horizon: Horizon })[];
 };
@@ -350,6 +351,11 @@ export function ScalperBot() {
             <p className="small muted" role="status">
               {s.message}
             </p>
+            {data?.feed?.checks?.filter(c => c.runId === run.id).map(c => (
+              <p className="small muted" key={c.horizon}>
+                {label(c.horizon)} · Last entry check {new Date(c.at).toLocaleTimeString()} · Target round {new Date(c.target * 1000).toLocaleTimeString()}: {c.reason}
+              </p>
+            ))}
             {s.positions.length > 0 && (
               <DataTable
                 headers={[

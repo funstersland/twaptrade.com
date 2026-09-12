@@ -8,7 +8,7 @@ The user requested a newly designed support/resistance rejection strategy, BTC 5
 
 Use `prices.crypto.chainlink.twap`, `windowSeconds:60`, `btc/usd`, with exact E18 arithmetic. These are candles of observed TWAP values, not a recreation of Chainlink's underlying TWAP formula. Build closed 15s, 1m, 3m and 5m candles from the stream. Reject future/stale/out-of-order observations. More than three seconds between observations invalidates a candle. Finalization requires the next observation across its closing boundary. Persist completed candles in `scalper_feed`; partial candles are not restored after a restart. Missing history is never backfilled with spot prices or fabricated observations.
 
-The 5m contract uses 1m structural candles and 15s rejection candles; 15m uses 3m structure and 1m rejection; hourly uses 5m structure and 5m rejection. Require at least 40 consecutive valid structural candles, using up to 60. Startup warmup is roughly 40 minutes, two hours and three hours twenty minutes respectively, plus the rejection/confirmation time. Gaps or missing pivots can extend that period.
+The 5m contract uses 1m structural candles and 15s rejection candles; 15m uses 3m structure and 1m rejection; hourly uses 5m structure and 5m rejection. Require at least 40 consecutive valid structural candles, using up to 60. Use the latest complete consecutive suffix: an older gap outside the recovered 40-candle suffix does not force a 60-candle restart. Startup warmup is roughly 40 minutes, two hours and three hours twenty minutes respectively, plus the rejection/confirmation time. Gaps or missing pivots can extend that period. The tile reports the recovered count and distinguishes structural warmup, invalid rejection candles and stale prices.
 
 Levels use body lows/highs, with two closed candles on either side confirming each pivot. Cluster same-kind pivots within 0.15 of the 20-candle ATR and require two touches. Only context candles ending before the rejection starts are eligible. This prevents a rejection from creating its own supporting historical level.
 
@@ -33,6 +33,8 @@ Live requires member ARM after reviewing the saved config, a verified funding wa
 The martingale checkbox doubles after a realized negative result and resets on nonnegative results, separately for each horizon. The default maximum is three doubling steps, but the stake or daily limit may stop the sequence earlier. A skipped or unfilled trade does not change the streak. No limit automatically resets a loss sequence. Martingale changes stake size, not prediction accuracy, and a doubled winning order need not recover all previous costs.
 
 The tile reports full closed-trade net P/L, win rate, maximum winning streak, maximum losing streak and maximum USD drawdown. Overall streaks use actual settlement order; martingale's internal per-horizon streaks remain separate.
+
+The feed retains each run's last entry check per horizon, including target round, timestamp and blocking reason. Member responses filter these checks to that member's runs. Quote failures distinguish stale books, price/spread limits, depth and a lot too small for the venue minimum. These diagnostics never increase a stake, bypass a signal or submit an order. Historical checks from before this reporting change cannot be reconstructed from the last feed snapshot.
 
 ## Operation and verification
 

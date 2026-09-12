@@ -10,7 +10,7 @@ import {
   nextStart,
   entryWindow,
   nextStake,
-  quoteBuy,
+  quoteBuyCheck,
 } from "../../lib/bots/crypto-shares/scalper/rules.ts";
 import { entryGate } from "../../lib/bots/crypto-shares/scalper/state.ts";
 import { marketAt, orderBook } from "./scalper-market.mjs";
@@ -45,7 +45,11 @@ let stopped = false,
   stream = null,
   clockOK = false;
 const plans = new Map(),
-  attempted = new Set();
+  attempted = new Set(),
+  checks = new Map();
+function recordCheck(run, horizon, target, reason) {
+  checks.set(`${run.id}:${horizon}`, { runId: run.id, horizon, target, at: Date.now(), reason: reason.slice(0, 300) });
+}
 async function bridge(payload) {
   const r = await fetch(endpoint, {
     method: payload ? "POST" : "GET",
@@ -123,6 +127,7 @@ async function heartbeat() {
     latest,
     candles: candles.snapshot(),
     geoAllowed,
+    checks: [...checks.values()].filter(c => jobs.runs.some(r => r.id === c.runId)).slice(-300),
     message:
       latest && Date.now() - latest.at < 3000
         ? "TWAP candle analysis active"
@@ -235,20 +240,17 @@ async function planEntries() {
         continue;
       if (remaining > 30000 || remaining <= 22000 || plans.has(key)) continue;
       const signal = analyze(candles.snapshot(), latest, horizon, now);
-      if (!signal.direction) continue;
+      if (!signal.direction) { recordCheck(run, horizon, target, signal.reason); continue; }
       try {
         const m = await marketAt(target, horizon),
           stake = nextStake(run.state.config, run.state.lossStreaks[horizon]);
-        if (
-          !m.accepting ||
-          !stake ||
-          run.state.positions.some((p) => p.market.horizon === horizon) ||
-          run.state.lastAttempt[horizon] >= target
-        )
-          continue;
+        if (!m.accepting) { recordCheck(run, horizon, target, "Upcoming market is not accepting orders"); continue; }
+        if (!stake) { recordCheck(run, horizon, target, "Martingale or stake limit reached"); continue; }
+        if (run.state.positions.some((p) => p.market.horizon === horizon)) { recordCheck(run, horizon, target, "An unresolved position blocks this timeframe"); continue; }
+        if (run.state.lastAttempt[horizon] >= target) continue;
         const tokenId = signal.direction === "Up" ? m.upToken : m.downToken,
           book = await orderBook(tokenId),
-          quote = quoteBuy(
+          quote = quoteBuyCheck(
             book,
             stake,
             run.state.config,
@@ -256,15 +258,14 @@ async function planEntries() {
             m.feeExponent,
             Date.now(),
           );
-        if (!quote) continue;
+        if (!quote.quote) { recordCheck(run, horizon, target, quote.reason); continue; }
         let prepared = null;
         if (run.mode === "live") {
           if (
             !geoAllowed ||
             !process.env.TWAP_BOT_ENCRYPTION_KEY ||
             !run.state.connection.approved
-          )
-            continue;
+          ) { recordCheck(run, horizon, target, "Live wallet or region checks did not pass"); continue; }
           prepared = await prepareBuy(
             run,
             tokenId,
@@ -280,8 +281,9 @@ async function planEntries() {
           prepared,
           version: run.state.configVersion,
         });
+        recordCheck(run, horizon, target, "Quote prepared; waiting for the T−22 to T−20 entry check");
       } catch {
-        /* Missing liquidity or rules skip this opportunity. */
+        recordCheck(run, horizon, target, "Market, quote or order preparation unavailable; no order sent");
       }
     }
 }
@@ -310,10 +312,12 @@ async function entries() {
           continue;
         const stake = entryGate(run.state, plan.m, Date.now(), geoAllowed);
         const signal = analyze(candles.snapshot(), latest, horizon, Date.now());
-        if (signal.direction !== plan.direction || stake !== plan.stake)
+        if (signal.direction !== plan.direction || stake !== plan.stake) {
+          recordCheck(run, horizon, target, signal.direction !== plan.direction ? `Signal changed: ${signal.reason}` : "Stake changed before submission");
           continue;
+        }
         const book = await orderBook(plan.tokenId),
-          quote = quoteBuy(
+          checked = quoteBuyCheck(
             book,
             stake,
             run.state.config,
@@ -321,7 +325,9 @@ async function entries() {
             plan.m.feeExponent,
             Date.now(),
           );
-        if (!quote || !entryWindow(Date.now(), target, horizon)) continue;
+        const quote = checked.quote;
+        if (!quote) { recordCheck(run, horizon, target, checked.reason); continue; }
+        if (!entryWindow(Date.now(), target, horizon)) { recordCheck(run, horizon, target, "Quote arrived after the entry cutoff; no order sent"); continue; }
         const reserve = await command(
           run,
           {
@@ -335,6 +341,7 @@ async function entries() {
         );
         positionId = reserve.id;
         await command(run, { action: "submit", positionId });
+        recordCheck(run, horizon, target, run.mode === "paper" ? "Paper order submitted" : "Order reserved for one exchange submission");
         if (run.mode === "paper") {
           const { costMicros, sharesMicros, feeMicros } = quote;
           await command(
@@ -372,6 +379,7 @@ async function entries() {
             });
         }
       } catch {
+        recordCheck(run, horizon, target, providerAttempted ? "Exchange outcome requires reconciliation; no retry" : "Entry gate, state or deadline changed; no exchange order sent");
         if (positionId)
           await command(run, {
             action: providerAttempted ? "uncertain" : "unfilled",
@@ -383,11 +391,17 @@ async function entries() {
       }
     }
   const cutoff = Date.now() - 7200000;
-  for (const [key, p] of plans)
+  for (const [key, p] of plans) {
+    if (!attempted.has(key) && Date.now() >= p.m.start * 1000 - 20000) {
+      const run = jobs.runs.find(r => key === `${r.id}:${p.m.horizon}:${p.m.start}`);
+      if (run) recordCheck(run, p.m.horizon, p.m.start, "Prepared quote missed the entry window; no catch-up order sent");
+      attempted.add(key);
+    }
     if (p.m.start * 1000 < cutoff) {
       plans.delete(key);
       attempted.delete(key);
     }
+  }
 }
 process.on("SIGINT", () => {
   stopped = true;
@@ -400,6 +414,7 @@ process.on("SIGTERM", () => {
 try {
   const initial = await bridge();
   candles = new CandleBook(initial.feed?.candles || []);
+  for (const c of initial.feed?.checks || []) checks.set(`${c.runId}:${c.horizon}`, c);
 } catch {
   /* Wait for registration/service readiness below. */
 }

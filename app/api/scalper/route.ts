@@ -110,7 +110,7 @@ export async function GET(req: Request) {
     return json({
       botId: b.id,
       runs,
-      feed,
+      feed: feed ? { ...feed, checks: feed.checks?.filter(c => rows.results.some(r => r.id === c.runId)) } : null,
       online: !!feed && Date.now() - feed.heartbeat < 10000,
       defaults: DEFAULT_CONFIG,
       page,
