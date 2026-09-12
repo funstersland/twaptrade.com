@@ -239,7 +239,7 @@ export function ForecastBot() {
                 {signal?.frames.map(f => <div key={f.seconds}>
                   <span>{f.seconds === 3600 ? "1h" : `${f.seconds/60}m`} trend</span>
                   <strong>{f.trend || "Mixed"}</strong>
-                  <span>{f.pattern || "No candle pattern"}</span>
+                  <span>{f.pattern ? `${f.patternDirection} · ${f.pattern}` : "No candle pattern"}</span>
                 </div>)}
               </div>
               <p className="small muted">All four closed timeframes contribute. Strength is an agreement score, not a win probability. The chart shows {FRAMES[h].context/60}m BTC spot candles.</p>
