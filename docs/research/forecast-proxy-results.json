@@ -1,0 +1,163 @@
+{
+  "from": "2026-08-01T00:00:00.000Z",
+  "until": "2026-09-12T00:00:00.000Z",
+  "source": "Binance BTCUSDT 1m klines",
+  "minutes": 64800,
+  "dataSha256": "33cd1b8a2eaf146a4fe4446d8065d2ab019dd226ee3da0c0fb153fab39e9574c",
+  "strategySha256": "5c753e76aba54da734c2e6759d455ae12c13a7bb04001799e538ffcfbdc56e19",
+  "limitations": [
+    "Spot candle direction, not Chainlink TWAP outcomes",
+    "T-25 tick, Polymarket quotes, fees, fills and exposure gates not replayed",
+    "No parameter search or refit; fixed first specification",
+    "Wilson intervals assume independent trials; overlapping horizons and serial dependence weaken them"
+  ],
+  "results": [
+    {
+      "horizon": 300,
+      "eligible": 12096,
+      "trades": 748,
+      "wins": 362,
+      "losses": 386,
+      "winRate": 0.4839572192513369,
+      "wilson95": [
+        0.44831681184633254,
+        0.5197615706214639
+      ],
+      "maxWinningStreak": 11,
+      "maxLosingStreak": 18,
+      "coverage": 0.06183862433862434,
+      "weeks": {
+        "1": {
+          "wins": 66,
+          "losses": 64
+        },
+        "2": {
+          "wins": 61,
+          "losses": 70
+        },
+        "3": {
+          "wins": 67,
+          "losses": 60
+        },
+        "4": {
+          "wins": 50,
+          "losses": 66
+        },
+        "5": {
+          "wins": 53,
+          "losses": 66
+        },
+        "6": {
+          "wins": 65,
+          "losses": 60
+        }
+      },
+      "skips": {
+        "4/4 trends agree; waiting for a 1m candle pattern": 2314,
+        "3/4 trends agree; waiting for a 1m candle pattern": 2204,
+        "Mixed trend": 6374,
+        "Nearby opposing support/resistance limits room": 395,
+        "Strong hourly trend opposes the forecast": 61
+      },
+      "tradeDigest": "2922b19ba8e43c905cb452c38d6e21b42637114b01bd859c53acda6cd26be6d1"
+    },
+    {
+      "horizon": 900,
+      "eligible": 4032,
+      "trades": 293,
+      "wins": 124,
+      "losses": 169,
+      "winRate": 0.4232081911262799,
+      "wilson95": [
+        0.3679875258204184,
+        0.4804164714629814
+      ],
+      "maxWinningStreak": 7,
+      "maxLosingStreak": 9,
+      "coverage": 0.0726686507936508,
+      "weeks": {
+        "1": {
+          "wins": 20,
+          "losses": 26
+        },
+        "2": {
+          "wins": 16,
+          "losses": 31
+        },
+        "3": {
+          "wins": 38,
+          "losses": 30
+        },
+        "4": {
+          "wins": 17,
+          "losses": 30
+        },
+        "5": {
+          "wins": 18,
+          "losses": 27
+        },
+        "6": {
+          "wins": 15,
+          "losses": 25
+        }
+      },
+      "skips": {
+        "4/4 trends agree; waiting for a 5m candle pattern": 656,
+        "Mixed trend": 2123,
+        "3/4 trends agree; waiting for a 5m candle pattern": 762,
+        "Strong hourly trend opposes the forecast": 18,
+        "Nearby opposing support/resistance limits room": 180
+      },
+      "tradeDigest": "e55cc3197567c3316f9bb2ad324b9f4d9f5d56f1fce61145c24afd301aab7a64"
+    },
+    {
+      "horizon": 3600,
+      "eligible": 1008,
+      "trades": 64,
+      "wins": 30,
+      "losses": 34,
+      "winRate": 0.46875,
+      "wilson95": [
+        0.3517578764404486,
+        0.5892812499952487
+      ],
+      "maxWinningStreak": 3,
+      "maxLosingStreak": 4,
+      "coverage": 0.06349206349206349,
+      "weeks": {
+        "1": {
+          "wins": 7,
+          "losses": 4
+        },
+        "2": {
+          "wins": 6,
+          "losses": 5
+        },
+        "3": {
+          "wins": 6,
+          "losses": 11
+        },
+        "4": {
+          "wins": 2,
+          "losses": 2
+        },
+        "5": {
+          "wins": 5,
+          "losses": 5
+        },
+        "6": {
+          "wins": 4,
+          "losses": 7
+        }
+      },
+      "skips": {
+        "4/4 trends agree; waiting for a 5m candle pattern": 149,
+        "Mixed trend": 568,
+        "3/4 trends agree; waiting for a 5m candle pattern": 190,
+        "Strong hourly trend opposes the forecast": 1,
+        "Nearby opposing support/resistance limits room": 36
+      },
+      "tradeDigest": "d9e3188317005a2f5de4b0a42dd8b5a0329840f6ab22fb29618faf6d0114f8d4"
+    }
+  ]
+}

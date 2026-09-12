@@ -4,6 +4,8 @@ import Link from "next/link";
 import { CheapshareBot } from "./cheapshare-bot";
 import { CHEAPSHARE } from "@/lib/bots/crypto-shares/cheapshare/identity";
 import { ContinuationBot } from "./continuation-bot";
+import { ForecastBot } from "./forecast-bot";
+import { FORECAST } from "@/lib/bots/crypto-shares/forecast/identity";
 import { ScalperBot } from "./scalper-bot";
 import { SCALPER } from "@/lib/bots/crypto-shares/scalper/identity";
 import { BotRiskMetrics } from "./bot-risk-metrics";
@@ -131,7 +133,7 @@ export function Workspace({
       .reduce((n, d) => n + d.allocation_cents, 0) || 0;
   const cash = account?.balanceCents || 0;
   const visibleBots =
-    account?.bots.filter((bot) => bot.strategy_key !== CONTINUATION.key && bot.strategy_key !== CHEAPSHARE.key && bot.strategy_key !== SCALPER.key && (family === "all" || bot.family === family)) ||
+    account?.bots.filter((bot) => bot.strategy_key !== CONTINUATION.key && bot.strategy_key !== CHEAPSHARE.key && bot.strategy_key !== SCALPER.key && bot.strategy_key !== FORECAST.key && (family === "all" || bot.family === family)) ||
     [];
   const masked = (value: number) => (hidden ? "••••••" : money(value));
   const filtered =
@@ -461,12 +463,13 @@ export function Workspace({
               {account.bots.some((bot) => bot.strategy_key === CONTINUATION.key) && <ContinuationBot />}
               {account.bots.some((bot) => bot.strategy_key === CHEAPSHARE.key) && <CheapshareBot />}
               {account.bots.some((bot) => bot.strategy_key === SCALPER.key && bot.family === SCALPER.family && bot.name.toLowerCase() === SCALPER.name.toLowerCase()) && <ScalperBot />}
-              {(account.bots.some((bot) => bot.strategy_key !== CONTINUATION.key && bot.strategy_key !== CHEAPSHARE.key && bot.strategy_key !== SCALPER.key) || account.deployments.length > 0) && <>
+              {account.bots.some((bot) => bot.strategy_key === FORECAST.key && bot.family === FORECAST.family && bot.name.toLowerCase() === FORECAST.name.toLowerCase()) && <ForecastBot />}
+              {(account.bots.some((bot) => bot.strategy_key !== CONTINUATION.key && bot.strategy_key !== CHEAPSHARE.key && bot.strategy_key !== SCALPER.key && bot.strategy_key !== FORECAST.key) || account.deployments.length > 0) && <>
               <Tabs defaultValue="catalog">
                 <TabsList variant="line">
                   <TabsTrigger value="catalog">
                     Available bots{" "}
-                    <span className="count-pill">{account.bots.filter((bot) => bot.strategy_key !== CONTINUATION.key && bot.strategy_key !== CHEAPSHARE.key && bot.strategy_key !== SCALPER.key).length}</span>
+                    <span className="count-pill">{account.bots.filter((bot) => bot.strategy_key !== CONTINUATION.key && bot.strategy_key !== CHEAPSHARE.key && bot.strategy_key !== SCALPER.key && bot.strategy_key !== FORECAST.key).length}</span>
                   </TabsTrigger>
                   <TabsTrigger value="deployments">
                     My deployments{" "}

@@ -379,3 +379,21 @@ export const scalperFeed = sqliteTable("scalper_feed", {
   id: text("id").primaryKey(), lease: text("lease").notNull(), leaseUntil: integer("lease_until").notNull(),
   heartbeat: integer("heartbeat").notNull(), dataJson: text("data_json").notNull(),
 });
+
+// Forecast has its own state, performance journal and feed. No account-ledger writes.
+export const forecastRuns = sqliteTable("forecast_runs", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => profiles.userId),
+  botId: text("bot_id").notNull().references(() => bots.id), mode: text("mode").notNull(),
+  revision: integer("revision").notNull().default(0), lastEvent: text("last_event").notNull(),
+  stateJson: text("state_json").notNull(), walletAddress: text("wallet_address"), walletCipher: text("wallet_cipher"),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, t => [uniqueIndex("idx_forecast_user_bot_mode").on(t.userId,t.botId,t.mode)]);
+export const forecastEvents = sqliteTable("forecast_events", {
+  id: text("id").primaryKey(), runId: text("run_id").notNull().references(() => forecastRuns.id),
+  revision: integer("revision").notNull(), kind: text("kind").notNull(), dataJson: text("data_json").notNull(),
+  createdAt: text("created_at").notNull(),
+}, t => [uniqueIndex("idx_forecast_event_revision").on(t.runId,t.revision)]);
+export const forecastFeed = sqliteTable("forecast_feed", {
+  id: text("id").primaryKey(), lease: text("lease").notNull(), leaseUntil: integer("lease_until").notNull(),
+  heartbeat: integer("heartbeat").notNull(), dataJson: text("data_json").notNull(),
+});

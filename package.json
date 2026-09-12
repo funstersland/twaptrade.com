@@ -19,7 +19,9 @@
     "bot:cheapshare": "node scripts/bots/cheapshare-runner.mjs",
     "bot:register:cheapshare": "node scripts/register-cheapshare.mjs",
     "bot:scalper": "node scripts/bots/scalper-runner.mjs",
-    "bot:register:scalper": "node scripts/register-scalper.mjs"
+    "bot:register:scalper": "node scripts/register-scalper.mjs",
+    "bot:forecast": "node scripts/bots/forecast-runner.mjs",
+    "bot:register:forecast": "node scripts/register-forecast.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

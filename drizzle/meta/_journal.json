@@ -85,6 +85,13 @@
       "when": 1789135264615,
       "tag": "0011_soft_black_widow",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789181642761,
+      "tag": "0012_forecast_confluence",
+      "breakpoints": true
     }
   ]
 }
