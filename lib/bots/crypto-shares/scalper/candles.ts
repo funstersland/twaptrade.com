@@ -32,7 +32,9 @@ export class CandleBook {
       !Number.isSafeInteger(tick.at) ||
       tick.at <= this.lastAt ||
       tick.at > receivedAt + 500 ||
-      receivedAt - tick.at > 3000 ||
+      // Arrival latency is not a hole in observed history. Retain bounded delayed
+      // observations; analyze() still requires a <=3s live tick before entry.
+      receivedAt - tick.at > 60000 ||
       !/^\d{1,40}$/.test(tick.value) ||
       BigInt(tick.value) <= 0n
     )

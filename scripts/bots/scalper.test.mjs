@@ -123,7 +123,8 @@ test("TWAP uses exact decimals and only closes at the next bucket; gaps remain i
   );
   const restored = new CandleBook(b.snapshot());
   assert(restored.snapshot().every((c) => c.complete));
-  assert(!restored.push({ at: 340000, value: e18(100) }, 344000));
+  assert(restored.push({ at: 340000, value: e18(100) }, 344000));
+  assert(!restored.push({ at: 341000, value: e18(100) }, 401001));
 });
 test("closed support/body recovery and mirrored resistance qualify across all horizons", () => {
   for (const h of [300, 900, 3600])

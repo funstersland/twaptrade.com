@@ -8,6 +8,8 @@ import { scan } from "../../lib/bots/crypto-shares/cheapshare/rules.ts";
 import { DEFAULT_CONFIG as cheapshareConfig } from "../../lib/bots/crypto-shares/cheapshare/config.ts";
 import { rejectionFixture } from "../tests/scalper-fixtures.mjs";
 import { reversalFixture } from "../tests/cheapshare-fixtures.mjs";
+import { CandleBook, toE18 } from "../../lib/bots/crypto-shares/scalper/candles.ts";
+import { Feeds } from "./cheapshare-market.mjs";
 
 test("Continuation accounting includes full closed history, isolates runs and includes fees only once", async () => {
   const sql = new DatabaseSync(":memory:");
@@ -66,4 +68,49 @@ test("CheapShare identifies the stale source while preserving its entry gate", (
   assert.equal(blocked.eligible,false);
   assert.equal(blocked.diagnostics.agesMs.oracle,3000);
   assert.equal(blocked.diagnostics.watchingSince,i.watchingSince);
+});
+
+test("Scalper retains delayed observed candles but never treats a delayed live tick as fresh", () => {
+  const b = new CandleBook();
+  for (let at=300000; at<=315000; at+=1000)
+    assert(b.push({at,value:toE18("100")},at+4000));
+  assert.equal(b.snapshot().find(c => c.seconds===15).complete,true);
+  const f = rejectionFixture();
+  assert.match(analyze(f.candles,{...f.latest,at:f.now-4000},300,f.now).reason,/fresh/);
+  assert(!b.push({at:316000,value:toE18("100")},376001));
+});
+
+test("CheapShare verifies a quiet quote with a new read and never refreshes failed/cached/mismatched data", async () => {
+  const f = new Feeds();
+  f.available.add("BTC");
+  f.available.add("HYPE");
+  const at=Date.now()-800;
+  f.addSpot({at,s:"BTCUSDT",b:"100",a:"101",u:7});
+  const ok = async (url,options) => {
+    assert.match(url,/symbol=BTCUSDT$/);
+    assert.equal(options.cache,"no-store");
+    return Response.json({symbol:"BTCUSDT",bidPrice:"100",askPrice:"101"});
+  };
+  await f.refreshSpotSnapshots(ok);
+  assert(f.spot.get("BTC").at(-1).at>at);
+  assert.equal(f.continuity.get("spot:BTC").since,at);
+  assert.equal(f.spot.get("BTC").at(-1).sequence,7);
+  assert.equal(f.spot.has("HYPE"),false);
+  for (const get of [async()=>{throw Error("offline");},async()=>Response.json({symbol:"ETHUSDT",bidPrice:"100",askPrice:"101"}),async()=>Response.json({symbol:"BTCUSDT",bidPrice:"100",askPrice:"101"},{headers:{age:"1"}})]) {
+    f.spot.get("BTC").at(-1).at=Date.now()-800;
+    const previous=structuredClone(f.spot.get("BTC"));
+    await f.refreshSpotSnapshots(get);
+    assert.deepEqual(f.spot.get("BTC"),previous);
+  }
+});
+
+test("CheapShare REST requests cannot overwrite a newer WebSocket quote", async () => {
+  const f=new Feeds(); f.available.add("BTC");
+  f.addSpot({at:Date.now()-800,s:"BTCUSDT",b:"100",a:"101",u:7});
+  await f.refreshSpotSnapshots(async()=> {
+    f.addSpot({at:Date.now(),s:"BTCUSDT",b:"102",a:"103",u:8});
+    return Response.json({symbol:"BTCUSDT",bidPrice:"100",askPrice:"101"});
+  });
+  assert.equal(f.spot.get("BTC").at(-1).bid,toE18("102"));
+  assert.equal(f.spot.get("BTC").at(-1).sequence,8);
 });

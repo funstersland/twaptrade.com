@@ -142,10 +142,35 @@ export class Feeds {
       ask = fixed(q.a).toString();
     if (!Number.isSafeInteger(at) || at > Date.now() + 500 || Date.now() - at > 1500 || BigInt(bid) <= 0n || BigInt(ask) < BigInt(bid)) return;
     const points = this.spot.get(pair) || [];
-    if (points.at(-1)?.sequence >= q.u) return;
+    const previous = points.at(-1);
+    if (previous?.at > at || (previous?.at === at && q.u === undefined) || (q.u !== undefined && previous?.sequence >= q.u)) return;
+    if (previous?.at === at) points.pop();
     this.observe(`spot:${pair}`, at, 1500);
-    points.push({ at, bid, ask, sequence: q.u });
+    points.push({ at, bid, ask, sequence: q.u ?? previous?.sequence });
     this.spot.set(pair, points.filter((p) => p.at >= at - 20000).slice(-10000));
+  }
+  async refreshSpotSnapshots(fetcher = fetch) {
+    // bookTicker streams report changes, not periodic heartbeats. Independently
+    // verify quiet quotes through a fresh REST read; never refresh a cached quote.
+    await Promise.allSettled([...this.available].filter(pair => pair !== "HYPE").map(async pair => {
+      const at = Date.now();
+      if (at - (this.spot.get(pair)?.at(-1)?.at || 0) < 500) return;
+      const response = await fetcher(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${pair}USDT`, {
+        cache: "no-store", signal: AbortSignal.timeout(1000),
+      });
+      if (!response.ok || Number(response.headers.get("age") || 0) > 0) return;
+      const q = await response.json();
+      if (q.symbol !== `${pair}USDT` || Date.now() - at > 1000) return;
+      // A WebSocket tick received during this request wins over its older read.
+      this.addSpot({ at, b: q.bidPrice, a: q.askPrice }, pair);
+    }));
+  }
+  async spotSnapshots() {
+    while (!this.stopped) {
+      const at = Date.now();
+      await this.refreshSpotSnapshots();
+      if (!this.stopped) await new Promise(resolve => setTimeout(resolve, Math.max(50, 500 - (Date.now() - at))));
+    }
   }
   async chainlink() {
     const client = createPublicClient();
@@ -250,6 +275,7 @@ export class Feeds {
   start() {
     void this.chainlink();
     void this.binance();
+    void this.spotSnapshots();
     void this.hyperliquid();
   }
   stop() {

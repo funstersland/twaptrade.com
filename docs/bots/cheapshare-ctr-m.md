@@ -12,6 +12,8 @@ An explicit Gamma Price-to-Beat is preferred. The fallback is only the official 
 
 The public Chainlink spot and TWAP streams supply timestamped exact decimal observations. Binance spot supplies executable underlying bid/ask references for BTC, ETH, SOL, XRP and DOGE. HYPE uses Hyperliquid's actual HYPE/USDC spot book, resolved from the unique HYPE and USDC tokens in public spot metadata, with one snapshot per second. No HYPE futures substitution is made. USDT and USDC are USD proxies; the forecast additionally uses the less favorable of the external spot quote and the official Chainlink spot observation.
 
+Binance book-ticker WebSocket updates are change-driven. A separate 500ms check obtains an uncached REST book-ticker snapshot for a supported Binance pair when no observation arrived in the last 500ms. The read uses its request-start time, must finish within one second, checks the exact symbol and cached-response age, and cannot overwrite a newer WebSocket quote. It preserves the 1.5s spot freshness/continuity gate without treating every quiet quote as a disconnect. Failed snapshots do not refresh an old price. HYPE remains on its separate Hyperliquid feed.
+
 ## Price-and-time model
 
 `bucket.ts` integrates observed Chainlink spot prices over the known portion of the final lookback. Historical samples that will have expired at settlement do not remain in the bucket. Future contributions use a conservative spot reference with a configurable fraction of the impulse retraced. Execution time and model disagreement are included in the checks.
