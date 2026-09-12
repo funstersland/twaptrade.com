@@ -18,7 +18,6 @@ import {
   Palette,
   Eye,
   EyeOff,
-  ArrowUpRight,
   Activity,
 } from "lucide-react";
 import { Logo, useAppearance } from "./twap-ui";
@@ -348,16 +347,6 @@ function Navigation({
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        {!admin && (
-          <Link href="/app/referrals" className="referral-promo">
-            <Gift size={22} />
-            <strong>Better, together.</strong>
-            <p>Invite your circle to TwapTrade.</p>
-            <span>
-              Your referrals <ArrowUpRight size={14} />
-            </span>
-          </Link>
-        )}
         <SidebarMenu>
           {!admin && navItem("referrals", "Referrals", Gift)}
           {navItem("settings", "Settings", Settings)}
